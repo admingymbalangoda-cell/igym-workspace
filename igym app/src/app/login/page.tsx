@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import LoginForm from './LoginForm'
 
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: 'Member Login — iGYM',
   description: 'Sign in to your iGYM member account to track your workouts, attendance, and membership status.',

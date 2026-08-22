@@ -1,15 +1,17 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import useSWR from "swr";
 import { usePathname, useRouter } from "next/navigation";
-import dynamic from "next/dynamic";
+import dynamicImport from "next/dynamic";
 import { supabase } from "@/lib/supabase";
 import { createMemberAction, importMembersCSVAction, resetMemberPasswordAction, CSVImportRecord } from "@/app/actions/member-actions";
 
-const RecordExpenseModal = dynamic(() => import("./components/RecordExpenseModal"), { ssr: false });
-const PackagePricingModal = dynamic(() => import("./components/PackagePricingModal"), { ssr: false });
-const ActiveRateModal = dynamic(() => import("./components/ActiveRateModal"), { ssr: false });
+const RecordExpenseModal = dynamicImport(() => import("./components/RecordExpenseModal"), { ssr: false });
+const PackagePricingModal = dynamicImport(() => import("./components/PackagePricingModal"), { ssr: false });
+const ActiveRateModal = dynamicImport(() => import("./components/ActiveRateModal"), { ssr: false });
 
 import {
   LayoutDashboard,
