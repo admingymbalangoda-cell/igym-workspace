@@ -1,6 +1,6 @@
 "use client";
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import useSWR from "swr";
