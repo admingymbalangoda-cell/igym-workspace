@@ -188,6 +188,11 @@ export default function Pricing() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch mb-12 sm:mb-14">
           {currentPlans.map((plan, idx) => {
             const Icon = plan.icon;
+
+            // Generate professional structured WhatsApp message
+            const whatsappMessage = `Hello iGYM Team, 🏋️‍♂️\n\nI would like to register for the *${plan.title}* (${plan.price}).\nCould you please guide me through the admission process?\n\nMy Name: ____________________`;
+            const whatsappUrl = `https://wa.me/94761643242?text=${encodeURIComponent(whatsappMessage)}`;
+
             return (
               <div
                 key={idx}
@@ -227,7 +232,7 @@ export default function Pricing() {
                 </div>
 
                 <a
-                  href="https://igym-member-2wi4uros5-igym2.vercel.app/"
+                  href={whatsappUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className={`w-full py-3 rounded-xl font-extrabold text-xs text-center transition-all flex items-center justify-center gap-2 ${
