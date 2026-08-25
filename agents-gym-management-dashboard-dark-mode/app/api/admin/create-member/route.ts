@@ -3,6 +3,19 @@ import { NextResponse } from 'next/server'
 
 export async function POST(req: Request) {
   try {
+    // 1. Extract & Verify Authorization Bearer Token
+    const authHeader = req.headers.get('authorization') || req.headers.get('Authorization')
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Member Registration Error: Auth Account Creation Failed: This endpoint requires a valid Bearer token',
+        },
+        { status: 401 }
+      )
+    }
+    const token = authHeader.substring(7).trim()
+
     const body = await req.json()
     const {
       memberId,
@@ -15,9 +28,13 @@ export async function POST(req: Request) {
       tier,
       status,
       emergencyContact,
+      isPTMember,
+      fitnessGoals,
+      durationMonths,
+      expiryDate,
     } = body
 
-    // 1. Input Validation
+    // 2. Input Validation
     if (!name || !name.trim()) {
       return NextResponse.json(
         { success: false, error: 'Member Full Name is required.' },
@@ -39,15 +56,24 @@ export async function POST(req: Request) {
       )
     }
 
-    // 2. Service Role Client Initialization
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const serviceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    // 3. Service Role Client Initialization & Bearer Token Verification
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
     if (!supabaseUrl) {
       return NextResponse.json(
         { success: false, error: 'Missing NEXT_PUBLIC_SUPABASE_URL configuration.' },
+        { status: 500 }
+      )
+    }
+
+    if (!serviceRoleKey) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Member Registration Error: Auth Account Creation Failed: SUPABASE_SERVICE_ROLE_KEY environment variable is not configured on the server.',
+        },
         { status: 500 }
       )
     }
@@ -58,6 +84,18 @@ export async function POST(req: Request) {
         persistSession: false,
       },
     })
+
+    // Verify admin identity using the Bearer token
+    const { data: { user: adminUser }, error: verifyError } = await adminSupabase.auth.getUser(token)
+    if (verifyError || !adminUser) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Member Registration Error: Auth Account Creation Failed: Invalid or expired Bearer token (${verifyError?.message || 'Unauthorized'})`,
+        },
+        { status: 401 }
+      )
+    }
 
     // Auto-format memberId without hyphen (e.g. MEM-022 -> MEM022)
     const cleanMemberId = memberId.trim().toUpperCase().replace(/^MEM-/, 'MEM')
@@ -142,13 +180,17 @@ export async function POST(req: Request) {
       name: name,
       phone: phone || 'N/A',
       address: address || 'Balangoda',
-      height: Number(height) || 170,
-      weight: Number(weight) || 70,
-      starting_weight: Number(weight) || 70,
+      height: height ? Number(height) : null,
+      weight: weight ? Number(weight) : null,
+      starting_weight: weight ? Number(weight) : null,
       tier: tier || 'Standard',
       status: status || 'Active',
       joined_date: new Date().toISOString().split('T')[0],
+      duration_months: durationMonths ? Number(durationMonths) : null,
+      expiry_date: expiryDate || null,
       emergency_contact: emergencyContact || 'N/A',
+      is_pt_member: !!isPTMember,
+      fitness_goals: fitnessGoals || undefined,
     }
 
     console.log('📦 Exact Payload for members insert (Full Payload):', JSON.stringify(fullPayload, null, 2))

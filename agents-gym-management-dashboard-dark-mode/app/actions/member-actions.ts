@@ -84,12 +84,14 @@ export async function createMemberAction(
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const serviceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
     if (!supabaseUrl) {
       return { success: false, error: 'Missing NEXT_PUBLIC_SUPABASE_URL configuration.' }
+    }
+
+    if (!serviceRoleKey) {
+      return { success: false, error: 'Auth Account Creation Failed: SUPABASE_SERVICE_ROLE_KEY environment variable is missing.' }
     }
 
     const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {
@@ -244,12 +246,14 @@ export async function importMembersCSVAction(
 
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const serviceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
     if (!supabaseUrl) {
       return { success: false, count: 0, importedMembers: [], errors: ['Missing Supabase URL configuration.'] }
+    }
+
+    if (!serviceRoleKey) {
+      return { success: false, count: 0, importedMembers: [], errors: ['SUPABASE_SERVICE_ROLE_KEY environment variable is missing.'] }
     }
 
     const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {
@@ -390,12 +394,14 @@ export async function resetMemberPasswordAction(
     let memberIdStr = input.memberId ? input.memberId.trim() : ''
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const serviceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
     if (!supabaseUrl) {
       return { success: false, error: 'Missing NEXT_PUBLIC_SUPABASE_URL configuration.' }
+    }
+
+    if (!serviceRoleKey) {
+      return { success: false, error: 'SUPABASE_SERVICE_ROLE_KEY environment variable is missing.' }
     }
 
     const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {

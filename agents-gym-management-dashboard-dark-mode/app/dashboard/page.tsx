@@ -3775,28 +3775,47 @@ export default function Home() {
     const calculatedExpiryDate = calculateExpiryDate(new Date(), durationMonths);
 
     try {
-      // Execute secure Server Action for Supabase Auth & Member insertion
-      const result = await createMemberAction({
-        memberId: formattedId,
-        name: formData.name,
-        password: formData.password,
-        phone: formData.phone,
-        address: formData.address,
-        height: formData.height !== "" && formData.height !== null && formData.height !== undefined ? Number(formData.height) : undefined,
-        weight: formData.weight !== "" && formData.weight !== null && formData.weight !== undefined ? Number(formData.weight) : undefined,
-        tier: formData.tier,
-        status: formData.status,
-        emergencyContact: formData.emergencyContact,
-        isPTMember: formData.isPTMember,
-        fitnessGoals: formData.fitnessGoals,
-        durationMonths: durationMonths,
-        expiryDate: calculatedExpiryDate,
+      // 1. Retrieve current admin's session and access token
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        alert("⚠️ Member Registration Error:\n\nAdmin session token not found. Please log in again to continue.");
+        setIsSubmittingMember(false);
+        return;
+      }
+
+      // 2. Execute POST request to create-member API with Authorization Bearer token header
+      const response = await fetch("/api/admin/create-member", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          memberId: formattedId,
+          name: formData.name,
+          password: formData.password,
+          phone: formData.phone,
+          address: formData.address,
+          height: formData.height !== "" && formData.height !== null && formData.height !== undefined ? Number(formData.height) : undefined,
+          weight: formData.weight !== "" && formData.weight !== null && formData.weight !== undefined ? Number(formData.weight) : undefined,
+          tier: formData.tier,
+          status: formData.status,
+          emergencyContact: formData.emergencyContact,
+          isPTMember: formData.isPTMember,
+          fitnessGoals: formData.fitnessGoals,
+          durationMonths: durationMonths,
+          expiryDate: calculatedExpiryDate,
+        }),
       });
 
+      const result = await response.json();
+
       if (!result.success) {
-        const errorMsg = result.error || "Failed to create member via Server Action.";
+        const errorMsg = result.error || "Failed to create member via API.";
         console.error("Member creation failed:", errorMsg);
-        alert(`⚠️ Member Registration Error:\n\n${errorMsg}`);
+        alert(`⚠️ ${errorMsg.startsWith("Member Registration Error") ? errorMsg : `Member Registration Error:\n\n${errorMsg}`}`);
         setIsSubmittingMember(false);
         return; // DO NOT close modal on failure
       }
