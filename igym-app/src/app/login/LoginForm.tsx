@@ -1,6 +1,9 @@
 'use client'
 
-import { useRef, useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
+import { createClient } from '@/lib/supabase/client'
 import { loginAction } from './actions'
 
 interface LoginFormProps {
@@ -8,10 +11,41 @@ interface LoginFormProps {
 }
 
 export default function LoginForm({ errorMessage }: LoginFormProps) {
+  const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [showPassword, setShowPassword] = useState(false)
   const [showForgotModal, setShowForgotModal] = useState(false)
+  const [checkingSession, setCheckingSession] = useState(true)
   const formRef = useRef<HTMLFormElement>(null)
+
+  useEffect(() => {
+    const supabase = createClient()
+    let isMounted = true
+
+    supabase.auth.getSession().then((res: { data: { session: Session | null } }) => {
+      const session = res.data?.session
+      if (!isMounted) return
+      if (session?.user) {
+        router.replace('/dashboard')
+      } else {
+        setCheckingSession(false)
+      }
+    })
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
+      if (!isMounted) return
+      if (session?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
+        router.replace('/dashboard')
+      }
+    })
+
+    return () => {
+      isMounted = false
+      subscription.unsubscribe()
+    }
+  }, [router])
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -30,6 +64,25 @@ Name: [Type your Name here]
 Please help me reset my account.`
 
   const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(rawMessage)}`
+
+  if (checkingSession) {
+    return (
+      <div className="igym-login-root" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem' }}>
+          <div className="brand-icon" style={{ width: '56px', height: '56px' }}>
+            <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect x="2" y="14" width="6" height="8" rx="2" fill="currentColor" />
+              <rect x="28" y="14" width="6" height="8" rx="2" fill="currentColor" />
+              <rect x="8" y="10" width="4" height="16" rx="2" fill="currentColor" />
+              <rect x="24" y="10" width="4" height="16" rx="2" fill="currentColor" />
+              <rect x="12" y="16" width="12" height="4" rx="2" fill="currentColor" />
+            </svg>
+          </div>
+          <span className="spinner" aria-hidden="true" style={{ width: '24px', height: '24px' }} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="igym-login-root">
