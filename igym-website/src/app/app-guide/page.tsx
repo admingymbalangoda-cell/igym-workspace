@@ -12,15 +12,12 @@ import {
   Apple,
   Globe,
   ArrowRight,
-  Activity,
-  QrCode,
-  Sparkles,
   Lock,
 } from "lucide-react";
 
 export const metadata = {
-  title: "App Guide - Your Fitness Journey in Your Pocket | iGYM",
-  description: "Learn how to install the iGYM Member Progressive Web App on iOS and Android devices.",
+  title: "App Guide - Your Fitness Journey in Your Pocket | IGYM",
+  description: "Learn how to install the IGYM Member Progressive Web App on iOS and Android devices.",
 };
 
 const appScreenshots = [
@@ -43,7 +40,7 @@ const appScreenshots = [
 
 export default function AppGuidePage() {
   return (
-    <div className="min-h-screen flex flex-col bg-[#0b0f17] text-white">
+    <div className="min-h-screen flex flex-col bg-zinc-950 text-white">
       <Navbar />
 
       <main className="flex-1 pt-32 pb-24">
@@ -51,7 +48,7 @@ export default function AppGuidePage() {
           {/* Back Navigation Button */}
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-xs font-bold text-[#00f2fe] glass-card px-4 py-2 rounded-xl border border-[#00f2fe]/30 hover:border-[#00f2fe]/60 transition-all mb-8"
+            className="inline-flex items-center gap-2 text-xs font-bold text-red-500 glass-card px-4 py-2 rounded-xl border border-zinc-800 hover:border-red-500/50 transition-all mb-8 shadow-sm"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Home
@@ -59,7 +56,7 @@ export default function AppGuidePage() {
 
           {/* 1. HERO SECTION */}
           <div className="text-center max-w-3xl mx-auto mb-20">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#00f2fe]/10 border border-[#00f2fe]/30 text-xs font-bold text-[#00f2fe] uppercase tracking-wider mb-4">
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-red-500/10 border border-red-500/35 text-xs font-bold text-red-500 uppercase tracking-wider mb-4 shadow-sm shadow-red-500/10">
               <Smartphone className="w-4 h-4" />
               OFFICIAL MEMBER APP GUIDE
             </div>
@@ -75,7 +72,7 @@ export default function AppGuidePage() {
           {/* 2. APP FEATURES (2-3 Screenshots Placeholders) */}
           <div className="mb-24">
             <div className="text-center max-w-2xl mx-auto mb-12">
-              <span className="text-xs font-bold text-[#00f2fe] uppercase tracking-widest block mb-2">
+              <span className="text-xs font-bold text-red-500 uppercase tracking-widest block mb-2">
                 APP INTERFACE PREVIEW
               </span>
               <h2 className="text-3xl font-extrabold text-white">
@@ -87,11 +84,11 @@ export default function AppGuidePage() {
               {appScreenshots.map((item, idx) => (
                 <div
                   key={idx}
-                  className="glass-card rounded-3xl p-6 border border-white/10 hover:border-[#00f2fe]/40 transition-all group shadow-xl flex flex-col justify-between"
+                  className="glass-card rounded-3xl p-6 border border-zinc-800 hover:border-red-500/50 transition-all group shadow-xl flex flex-col justify-between bg-zinc-900/50"
                 >
                   <div>
                     {/* Screenshot Placeholder Container */}
-                    <div className="relative w-full aspect-[4/3] rounded-2xl overflow-hidden bg-slate-900 mb-6 border border-white/10">
+                    <div className="relative w-full aspect-[4/3] rounded-2xl overflow-hidden bg-zinc-900 mb-6 border border-zinc-800">
                       <Image
                         src={item.image}
                         alt={item.title}
@@ -99,10 +96,10 @@ export default function AppGuidePage() {
                         sizes="(max-width: 768px) 100vw, 33vw"
                         className="object-cover object-center group-hover:scale-105 transition-transform duration-500"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/80 via-transparent to-transparent" />
                     </div>
 
-                    <h3 className="text-lg font-bold text-white mb-2 group-hover:text-[#00f2fe] transition-colors">
+                    <h3 className="text-lg font-bold text-white mb-2 group-hover:text-red-500 transition-colors">
                       {item.title}
                     </h3>
                     <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
@@ -110,7 +107,7 @@ export default function AppGuidePage() {
                     </p>
                   </div>
 
-                  <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between text-xs text-[#00f2fe] font-semibold">
+                  <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-red-500 font-semibold">
                     <span className="flex items-center gap-1">
                       <CheckCircle2 className="w-3.5 h-3.5" /> Feature Included
                     </span>
@@ -124,22 +121,22 @@ export default function AppGuidePage() {
           {/* 3. INSTALLATION GUIDE (Visual Guide for iOS & Android) */}
           <div className="mb-24">
             <div className="text-center max-w-2xl mx-auto mb-12">
-              <span className="text-xs font-bold text-[#00f2fe] uppercase tracking-widest block mb-2">
+              <span className="text-xs font-bold text-red-500 uppercase tracking-widest block mb-2">
                 STEP-BY-STEP SETUP
               </span>
               <h2 className="text-3xl sm:text-4xl font-extrabold text-white">
-                HOW TO INSTALL THE iGYM PWA
+                HOW TO INSTALL THE IGYM PWA
               </h2>
               <p className="text-slate-400 text-sm mt-2">
-                Follow these simple steps on your mobile web browser to add iGYM to your home screen.
+                Follow these simple steps on your mobile web browser to add IGYM to your home screen.
               </p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* iOS Safari Guide */}
-              <div className="glass-panel p-8 rounded-3xl border border-white/10 relative overflow-hidden shadow-2xl">
+              <div className="glass-panel p-8 rounded-3xl border border-zinc-800 relative overflow-hidden shadow-2xl bg-zinc-900/80">
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center">
+                  <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
                     <Apple className="w-6 h-6 text-white" />
                   </div>
                   <div>
@@ -149,8 +146,8 @@ export default function AppGuidePage() {
                 </div>
 
                 <div className="space-y-6">
-                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-white/10">
-                    <div className="w-8 h-8 rounded-xl bg-[#00f2fe] text-slate-950 font-black text-sm flex items-center justify-center shrink-0">
+                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-zinc-800">
+                    <div className="w-8 h-8 rounded-xl bg-red-600 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-md shadow-red-600/30">
                       1
                     </div>
                     <div>
@@ -163,13 +160,13 @@ export default function AppGuidePage() {
                     </div>
                   </div>
 
-                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-white/10">
-                    <div className="w-8 h-8 rounded-xl bg-[#00f2fe] text-slate-950 font-black text-sm flex items-center justify-center shrink-0">
+                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-zinc-800">
+                    <div className="w-8 h-8 rounded-xl bg-red-600 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-md shadow-red-600/30">
                       2
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
-                        Tap 'Share' Icon <Share className="w-4 h-4 text-[#00f2fe]" />
+                        Tap 'Share' Icon <Share className="w-4 h-4 text-red-500" />
                       </h4>
                       <p className="text-xs text-slate-300">
                         At the bottom Safari toolbar, tap the square Share icon with the arrow pointing up.
@@ -177,13 +174,13 @@ export default function AppGuidePage() {
                     </div>
                   </div>
 
-                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-white/10">
-                    <div className="w-8 h-8 rounded-xl bg-[#00f2fe] text-slate-950 font-black text-xs flex items-center justify-center shrink-0">
+                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-zinc-800">
+                    <div className="w-8 h-8 rounded-xl bg-red-600 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-md shadow-red-600/30">
                       3
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
-                        Tap 'Add to Home Screen' <PlusSquare className="w-4 h-4 text-[#00f2fe]" />
+                        Tap 'Add to Home Screen' <PlusSquare className="w-4 h-4 text-red-500" />
                       </h4>
                       <p className="text-xs text-slate-300">
                         Scroll down the share menu options and select <strong>"Add to Home Screen"</strong>.
@@ -194,10 +191,10 @@ export default function AppGuidePage() {
               </div>
 
               {/* Android Chrome Guide */}
-              <div className="glass-panel p-8 rounded-3xl border border-white/10 relative overflow-hidden shadow-2xl">
+              <div className="glass-panel p-8 rounded-3xl border border-zinc-800 relative overflow-hidden shadow-2xl bg-zinc-900/80">
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
-                    <Globe className="w-6 h-6 text-emerald-400" />
+                  <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                    <Globe className="w-6 h-6 text-red-500" />
                   </div>
                   <div>
                     <h3 className="text-2xl font-bold text-white">For Android</h3>
@@ -206,8 +203,8 @@ export default function AppGuidePage() {
                 </div>
 
                 <div className="space-y-6">
-                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-white/10">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-400 text-slate-950 font-black text-sm flex items-center justify-center shrink-0">
+                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-zinc-800">
+                    <div className="w-8 h-8 rounded-xl bg-red-600 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-md shadow-red-600/30">
                       1
                     </div>
                     <div>
@@ -220,13 +217,13 @@ export default function AppGuidePage() {
                     </div>
                   </div>
 
-                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-white/10">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-400 text-slate-950 font-black text-sm flex items-center justify-center shrink-0">
+                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-zinc-800">
+                    <div className="w-8 h-8 rounded-xl bg-red-600 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-md shadow-red-600/30">
                       2
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
-                        Tap 'Menu' (3 dots) <MoreVertical className="w-4 h-4 text-emerald-400" />
+                        Tap 'Menu' (3 dots) <MoreVertical className="w-4 h-4 text-red-500" />
                       </h4>
                       <p className="text-xs text-slate-300">
                         Tap the three vertical dots menu icon located at the top-right corner of Chrome.
@@ -234,13 +231,13 @@ export default function AppGuidePage() {
                     </div>
                   </div>
 
-                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-white/10">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-400 text-slate-950 font-black text-xs flex items-center justify-center shrink-0">
+                  <div className="flex items-start gap-4 glass-card p-4 rounded-2xl border border-zinc-800">
+                    <div className="w-8 h-8 rounded-xl bg-red-600 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-md shadow-red-600/30">
                       3
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
-                        Tap 'Add to Home Screen' <PlusSquare className="w-4 h-4 text-emerald-400" />
+                        Tap 'Add to Home Screen' <PlusSquare className="w-4 h-4 text-red-500" />
                       </h4>
                       <p className="text-xs text-slate-300">
                         Select <strong>"Install App"</strong> or <strong>"Add to Home Screen"</strong> from the dropdown menu.
@@ -253,14 +250,14 @@ export default function AppGuidePage() {
           </div>
 
           {/* 4. FINAL CTA: "Go to Member Login" */}
-          <div className="glass-panel p-10 rounded-3xl border border-[#00f2fe]/40 text-center space-y-6 bg-gradient-to-br from-slate-950 via-[#0d1422] to-[#0b0f17] shadow-2xl">
-            <div className="w-14 h-14 rounded-2xl bg-[#00f2fe]/10 border border-[#00f2fe]/30 flex items-center justify-center mx-auto text-[#00f2fe]">
+          <div className="glass-panel p-10 rounded-3xl border border-red-500/35 text-center space-y-6 bg-gradient-to-br from-zinc-900 via-zinc-950 to-zinc-900 shadow-2xl shadow-red-500/10">
+            <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto text-red-500 shadow-sm">
               <Lock className="w-7 h-7" />
             </div>
 
             <h3 className="text-3xl font-extrabold text-white">READY TO LOG IN?</h3>
             <p className="text-slate-300 text-base max-w-xl mx-auto">
-              Click below to access your iGYM member account, log reps, and scan QR attendance.
+              Click below to access your IGYM member account, log reps, and scan QR attendance.
             </p>
 
             <div className="pt-2">
@@ -268,7 +265,7 @@ export default function AppGuidePage() {
                 href="https://igym-member-2wi4uros5-igym2.vercel.app/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-[#00f2fe] to-[#4facfe] text-slate-950 font-black text-base rounded-xl shadow-2xl shadow-[#00f2fe]/25 hover:shadow-[#00f2fe]/40 hover:scale-105 transition-all group"
+                className="inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-red-600 to-rose-600 text-white font-black text-base rounded-xl shadow-2xl shadow-red-600/30 hover:shadow-red-600/50 hover:scale-105 transition-all group"
               >
                 Go to Member Login
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />

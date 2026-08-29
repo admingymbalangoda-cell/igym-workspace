@@ -1,50 +1,50 @@
-import { Activity, Dumbbell, ShieldCheck, HeartPulse, Sparkles, Smartphone, Users, Trophy } from "lucide-react";
+import { Activity, Dumbbell, HeartPulse, Smartphone, Video, Flame } from "lucide-react";
 
 const features = [
   {
     icon: Dumbbell,
     title: "High-Tech Smart Equipment",
     description: "Imported biometrically integrated workout machines designed for maximum biomechanical efficiency and injury prevention.",
-    color: "text-[#00f2fe]",
+    color: "text-red-500",
   },
   {
     icon: HeartPulse,
     title: "1-on-1 Personal Training",
     description: "Tailored fitness programs built by certified trainers who track your progress daily and keep you motivated.",
-    color: "text-[#4facfe]",
+    color: "text-red-500",
   },
   {
     icon: Smartphone,
     title: "Mobile App Access & Progress Tracking",
-    description: "Track your workout reps, body weight trends, attendance, and instant trainer feedback directly in the iGYM app.",
-    color: "text-emerald-400",
+    description: "Easily track your body weight changes over time and receive direct workout instructions and advice from your trainer through the IGYM app.",
+    color: "text-red-500",
   },
   {
     icon: Activity,
     title: "Custom Diet & Meal Planning",
     description: "Personalized Sri Lankan macro nutrient breakdown calculated for your specific muscle building or weight loss goals.",
-    color: "text-amber-400",
+    color: "text-red-500",
   },
   {
-    icon: Users,
-    title: "Energetic Group Fitness Classes",
-    description: "Zumba, High Intensity Interval Training (HIIT), Power Lifting, Bodybuilding, and Yoga led by expert instructors.",
-    color: "text-purple-400",
+    icon: Video,
+    title: "Online Personal Training",
+    description: "Get expert guidance, live feedback, and personalized workout routines from our certified trainers through interactive online coaching sessions, no matter where you are.",
+    color: "text-red-500",
   },
   {
-    icon: Trophy,
-    title: "Recovery & Sauna Facilities",
-    description: "Accelerate muscle recovery and detoxify with dedicated steam sauna zones and sports therapy sessions.",
-    color: "text-rose-400",
+    icon: Flame,
+    title: "Cardio & Strength Zones",
+    description: "Fully equipped and spacious workout areas featuring advanced treadmills, power cages, and free weights tailored for both intense cardio burns and heavy lifting.",
+    color: "text-red-500",
   },
 ];
 
 export default function Features() {
   return (
-    <section id="features" className="py-24 relative bg-[#0b0f17]/90">
+    <section id="features" className="py-24 relative bg-zinc-950 border-t border-zinc-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center max-w-3xl mx-auto mb-16">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-[#00f2fe] mb-3">WHY CHOOSE iGYM BALANGODA</h2>
+          <h2 className="text-xs font-bold uppercase tracking-widest text-red-500 mb-3">WHY CHOOSE IGYM BALANGODA</h2>
           <p className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
             WORLD-CLASS FITNESS EXPERIENCE
           </p>
@@ -57,12 +57,12 @@ export default function Features() {
           {features.map((item, idx) => (
             <div
               key={idx}
-              className="glass-card p-8 rounded-2xl relative overflow-hidden group hover:border-[#00f2fe]/40 transition-all"
+              className="glass-card p-8 rounded-2xl relative overflow-hidden group hover:border-red-500/50 transition-all border border-zinc-800 shadow-xl"
             >
-              <div className="w-14 h-14 rounded-xl bg-slate-900/80 border border-white/10 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:border-[#00f2fe]/50 transition-all">
+              <div className="w-14 h-14 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:border-red-500/50 transition-all shadow-md">
                 <item.icon className={`w-7 h-7 ${item.color}`} />
               </div>
-              <h3 className="text-xl font-bold text-white mb-3 group-hover:text-[#00f2fe] transition-colors">
+              <h3 className="text-xl font-bold text-white mb-3 group-hover:text-red-500 transition-colors">
                 {item.title}
               </h3>
               <p className="text-slate-400 text-sm leading-relaxed">

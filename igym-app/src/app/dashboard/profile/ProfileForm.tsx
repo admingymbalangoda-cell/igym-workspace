@@ -301,38 +301,80 @@ export default function ProfileForm(props: ProfileFormProps) {
 
       if (!user) return
 
+      const parsedWeight = weightKg && !isNaN(parseFloat(weightKg)) ? parseFloat(weightKg) : null
+      const parsedHeight = heightCm && !isNaN(parseFloat(heightCm)) ? parseFloat(heightCm) : null
+
       const updatePayload: Record<string, any> = {
         full_name: fullName.trim(),
         name: fullName.trim(),
         phone: phone.trim() || null,
-        weight: weightKg ? parseFloat(weightKg) : null,
-        weight_kg: weightKg ? parseFloat(weightKg) : null,
-        height: heightCm ? parseFloat(heightCm) : null,
-        height_cm: heightCm ? parseFloat(heightCm) : null,
+        weight: parsedWeight,
+        weight_kg: parsedWeight,
+        height: parsedHeight,
+        height_cm: parsedHeight,
         emergency_contact_name: emergencyContactName.trim() || null,
         emergency_contact_phone: emergencyContactPhone.trim() || null,
         updated_at: new Date().toISOString(),
       }
 
       let error = null
+      let updated = false
+
       if (activeMemberId) {
         const res = await supabase
           .from('members')
           .update(updatePayload)
           .eq('id', activeMemberId)
-        error = res.error
-      } else {
+          .select('id')
+        if (!res.error && res.data && res.data.length > 0) {
+          updated = true
+        } else if (res.error) {
+          error = res.error
+        }
+      }
+
+      if (!updated && user?.id) {
         const res = await supabase
           .from('members')
           .update(updatePayload)
-          .or(`auth_user_id.eq.${user.id},member_id.eq.${displayMemberId}`)
-        error = res.error
+          .eq('auth_user_id', user.id)
+          .select('id')
+        if (!res.error && res.data && res.data.length > 0) {
+          updated = true
+        } else if (res.error) {
+          error = res.error
+        }
       }
 
-      if (error) {
+      if (!updated && displayMemberId && displayMemberId !== '—') {
+        const res = await supabase
+          .from('members')
+          .update(updatePayload)
+          .eq('member_id', displayMemberId)
+          .select('id')
+        if (!res.error && res.data && res.data.length > 0) {
+          updated = true
+        } else if (res.error) {
+          error = res.error
+        }
+      }
+
+      if (error && !updated) {
         console.error('Supabase Profile Update Error:', error)
         setToastState({ success: false, message: `Could not save changes: ${error.message}` })
       } else {
+        // Also insert into weight_tracking if weight was provided to sync progress chart
+        if (parsedWeight && parsedWeight > 0) {
+          const targetMemId = displayMemberId && displayMemberId !== '—' ? displayMemberId : (activeMemberId || 'MEM001')
+          await supabase.from('weight_tracking').insert([
+            {
+              member_id: targetMemId,
+              weight: parsedWeight,
+              recorded_date: new Date().toISOString().split('T')[0],
+            },
+          ])
+        }
+
         setToastState({ success: true, message: 'Profile updated successfully!' })
       }
     } catch (err: any) {
@@ -615,10 +657,10 @@ export default function ProfileForm(props: ProfileFormProps) {
               width: '100%',
               padding: '0.75rem 1rem',
               borderRadius: '0.625rem',
-              background: 'linear-gradient(135deg, hsl(158 84% 38%) 0%, hsl(158 84% 30%) 100%)',
+              background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
               color: '#fff',
               fontWeight: 600,
-              border: '1px solid hsl(158 84% 44% / 0.5)',
+              border: '1px solid rgba(220, 38, 38, 0.5)',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',

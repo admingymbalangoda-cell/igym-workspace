@@ -195,12 +195,12 @@ Please help me reset my account.`
               position: 'relative',
               width: '100%',
               maxWidth: '420px',
-              backgroundColor: '#0f172a',
-              border: '1px solid #1e293b',
+              backgroundColor: '#18181b',
+              border: '1px solid #27272a',
               borderRadius: '1.25rem',
               padding: '1.75rem',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5)',
-              color: '#f8fafc',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(0, 0, 0, 0.5)',
+              color: '#f4f4f5',
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -210,8 +210,8 @@ Please help me reset my account.`
                 width: '48px',
                 height: '48px',
                 borderRadius: '50%',
-                backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                color: '#10b981',
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                color: '#ef4444',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -227,7 +227,7 @@ Please help me reset my account.`
               Forgot your password?
             </h3>
 
-            <p style={{ fontSize: '0.9rem', color: '#94a3b8', textAlign: 'center', lineHeight: '1.5', marginBottom: '1.5rem' }}>
+            <p style={{ fontSize: '0.9rem', color: '#a1a1aa', textAlign: 'center', lineHeight: '1.5', marginBottom: '1.5rem' }}>
               Forgot your password? Please contact the Gym Front Desk or message us on WhatsApp to reset your account.
             </p>
 
@@ -244,12 +244,12 @@ Please help me reset my account.`
                   width: '100%',
                   padding: '0.85rem 1rem',
                   borderRadius: '0.625rem',
-                  backgroundColor: '#25D366',
+                  backgroundColor: '#dc2626',
                   color: '#fff',
                   fontWeight: 600,
                   fontSize: '0.95rem',
                   textDecoration: 'none',
-                  boxShadow: '0 4px 12px rgba(37, 211, 102, 0.3)',
+                  boxShadow: '0 4px 12px rgba(220, 38, 38, 0.3)',
                   transition: 'opacity 0.2s',
                 }}
               >
@@ -266,11 +266,11 @@ Please help me reset my account.`
                   width: '100%',
                   padding: '0.85rem 1rem',
                   borderRadius: '0.625rem',
-                  backgroundColor: '#1e293b',
-                  color: '#e2e8f0',
+                  backgroundColor: '#27272a',
+                  color: '#e4e4e7',
                   fontWeight: 600,
                   fontSize: '0.95rem',
-                  border: '1px solid #334155',
+                  border: '1px solid #3f3f46',
                   cursor: 'pointer',
                   transition: 'background 0.2s',
                 }}

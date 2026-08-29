@@ -243,9 +243,9 @@ export default function BillingView() {
           </div>
           <span className="bl-plan-price">
             {latestBalanceDue > 0 ? (
-              <span style={{ color: '#f87171' }}>Balance: LKR {latestBalanceDue.toLocaleString()}</span>
+              <span style={{ color: '#ef4444' }}>Balance: LKR {latestBalanceDue.toLocaleString()}</span>
             ) : (
-              <span style={{ color: '#34d399' }}>Account Active</span>
+              <span style={{ color: '#f4f4f5' }}>Account Active</span>
             )}
           </span>
         </div>
@@ -297,7 +297,7 @@ export default function BillingView() {
               Loading payment history...
             </div>
           ) : history.length === 0 ? (
-            <div className="notif-empty" style={{ padding: '2.5rem 1.5rem', textAlign: 'center', background: 'hsl(224 18% 10%)', borderRadius: '1rem' }}>
+            <div className="notif-empty" style={{ padding: '2.5rem 1.5rem', textAlign: 'center', background: 'hsl(240 5.9% 10%)', borderRadius: '1rem' }}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ width: 42, height: 42, margin: '0 auto 0.75rem', color: 'var(--text-muted)' }}>
                 <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                 <polyline points="14 2 14 8 20 8" />

@@ -118,7 +118,7 @@ function DashboardSkeleton() {
             justifyContent: 'center',
             gap: '0.75rem',
             padding: '1.5rem',
-            background: 'hsl(224 18% 10%)',
+            background: 'hsl(240 5.9% 10%)',
             borderRadius: '1.25rem',
             marginBottom: '1.75rem',
           }}
@@ -142,7 +142,7 @@ function DashboardSkeleton() {
                 key={i}
                 style={{
                   height: 90,
-                  background: 'hsl(224 18% 10%)',
+                  background: 'hsl(240 5.9% 10%)',
                   borderRadius: '1rem',
                   padding: '1rem',
                   display: 'flex',
@@ -165,7 +165,7 @@ function DashboardSkeleton() {
             <div
               style={{
                 height: 380,
-                background: 'hsl(224 18% 10%)',
+                background: 'hsl(240 5.9% 10%)',
                 borderRadius: '1.25rem',
                 padding: '1.5rem',
                 display: 'flex',
@@ -181,7 +181,7 @@ function DashboardSkeleton() {
             <div
               style={{
                 height: 380,
-                background: 'hsl(224 18% 10%)',
+                background: 'hsl(240 5.9% 10%)',
                 borderRadius: '1.25rem',
                 padding: '1.5rem',
                 display: 'flex',
@@ -198,7 +198,7 @@ function DashboardSkeleton() {
 
       <style jsx>{`
         .skeleton-box {
-          background: linear-gradient(90deg, hsl(224 18% 14%) 25%, hsl(224 18% 22%) 50%, hsl(224 18% 14%) 75%);
+          background: linear-gradient(90deg, hsl(240 5.9% 12%) 25%, hsl(240 5.9% 18%) 50%, hsl(240 5.9% 12%) 75%);
           background-size: 200% 100%;
           animation: skeleton-shimmer 1.5s infinite ease-in-out;
         }
@@ -252,11 +252,17 @@ function ProgressChartSection({
           .or(`auth_user_id.eq.${userId},id.eq.${userId},member_id.eq.${cleanId},member_id.eq.${hyphenId}`)
           .maybeSingle()
 
+        const latestFromMember = memberWeight
+          ? Number(memberWeight)
+          : memberRow?.weight || memberRow?.weight_kg
+            ? Number(memberRow.weight || memberRow.weight_kg)
+            : null
+
         if (memberRow && isMounted) {
           if (memberRow.target_weight) setTargetWeight(Number(memberRow.target_weight))
           if (memberRow.starting_weight) setStartingWeight(Number(memberRow.starting_weight))
-          if ((memberRow.weight || memberRow.weight_kg) && !currentWeight) {
-            setCurrentWeight(Number(memberRow.weight || memberRow.weight_kg))
+          if (latestFromMember) {
+            setCurrentWeight(latestFromMember)
           }
         }
 
@@ -281,9 +287,10 @@ function ProgressChartSection({
             }
           })
           setWeightLogs(formatted)
-          setCurrentWeight(formatted[formatted.length - 1].val)
+          const latestTrackVal = formatted[formatted.length - 1].val
+          setCurrentWeight(latestFromMember || latestTrackVal)
         } else if (isMounted) {
-          const singleW = memberWeight ? Number(memberWeight) : (memberRow?.weight || memberRow?.weight_kg ? Number(memberRow.weight || memberRow.weight_kg) : null)
+          const singleW = latestFromMember
           if (singleW) {
             setWeightLogs([{ month: 'Current', val: singleW, display: `${singleW.toFixed(1)} kg` }])
             setCurrentWeight(singleW)
@@ -312,7 +319,7 @@ function ProgressChartSection({
 
   const hasWeightLogs = weightLogs.length > 0
   const activeData = activeMetric === 'weight' ? weightLogs : visitsData
-  const strokeColor = activeMetric === 'weight' ? 'hsl(158, 84%, 44%)' : 'hsl(280, 80%, 65%)'
+  const strokeColor = activeMetric === 'weight' ? '#ef4444' : '#dc2626'
   const gradientId = activeMetric === 'weight' ? 'weightGrad' : 'visitsGrad'
 
   const vals = activeData.map((d) => d.val)
@@ -336,7 +343,7 @@ function ProgressChartSection({
 
   return (
     <section className="dash-section" aria-labelledby="progress-chart-heading">
-      <div className="dash-card" style={{ padding: '1.25rem 1.5rem', background: 'hsl(224 18% 10%)', borderRadius: '1.25rem' }}>
+      <div className="dash-card" style={{ padding: '1.25rem 1.5rem', background: 'hsl(240 5.9% 10%)', borderRadius: '1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
           <div>
             <h2 id="progress-chart-heading" className="section-heading" style={{ marginBottom: '0.25rem' }}>
@@ -347,7 +354,7 @@ function ProgressChartSection({
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.375rem', background: 'hsl(224 18% 6%)', padding: '0.25rem', borderRadius: '0.625rem', border: '1px solid var(--bg-card-border)' }}>
+          <div style={{ display: 'flex', gap: '0.375rem', background: 'hsl(240 5.9% 6%)', padding: '0.25rem', borderRadius: '0.625rem', border: '1px solid var(--bg-card-border)' }}>
             <button
               onClick={() => setActiveMetric('weight')}
               style={{
@@ -358,8 +365,8 @@ function ProgressChartSection({
                 border: 'none',
                 cursor: 'pointer',
                 transition: 'all 0.2s ease',
-                background: activeMetric === 'weight' ? 'var(--brand-primary)' : 'transparent',
-                color: activeMetric === 'weight' ? '#0d0f14' : 'var(--text-secondary)',
+                background: activeMetric === 'weight' ? '#dc2626' : 'transparent',
+                color: activeMetric === 'weight' ? '#fff' : 'var(--text-secondary)',
               }}
             >
               Weight (kg)
@@ -374,7 +381,7 @@ function ProgressChartSection({
                 border: 'none',
                 cursor: 'pointer',
                 transition: 'all 0.2s ease',
-                background: activeMetric === 'visits' ? 'var(--brand-accent)' : 'transparent',
+                background: activeMetric === 'visits' ? '#dc2626' : 'transparent',
                 color: activeMetric === 'visits' ? '#fff' : 'var(--text-secondary)',
               }}
             >
@@ -384,7 +391,7 @@ function ProgressChartSection({
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-          <div style={{ background: 'hsl(224 18% 13%)', padding: '0.75rem 1rem', borderRadius: '0.75rem', border: '1px solid var(--bg-card-border)' }}>
+          <div style={{ background: 'hsl(240 5.9% 12%)', padding: '0.75rem 1rem', borderRadius: '0.75rem', border: '1px solid var(--bg-card-border)' }}>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>
               {activeMetric === 'weight' ? 'Current Weight' : 'This Month Visits'}
             </span>
@@ -393,14 +400,14 @@ function ProgressChartSection({
                 {activeMetric === 'weight' ? (currentWeight ? `${currentWeight.toFixed(1)} kg` : '—') : '18 Visits'}
               </span>
               {activeMetric === 'weight' && diffVal && (
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: Number(diffVal) <= 0 ? 'var(--brand-primary)' : 'hsl(350 80% 65%)' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ef4444' }}>
                   {diffStr}
                 </span>
               )}
             </div>
           </div>
 
-          <div style={{ background: 'hsl(224 18% 13%)', padding: '0.75rem 1rem', borderRadius: '0.75rem', border: '1px solid var(--bg-card-border)' }}>
+          <div style={{ background: 'hsl(240 5.9% 12%)', padding: '0.75rem 1rem', borderRadius: '0.75rem', border: '1px solid var(--bg-card-border)' }}>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>
               {activeMetric === 'weight' ? 'Target Goal' : 'Consistency Score'}
             </span>
@@ -420,7 +427,7 @@ function ProgressChartSection({
         {activeMetric === 'weight' && !hasWeightLogs ? (
           <div
             style={{
-              background: 'hsl(224 18% 13%)',
+              background: 'hsl(240 5.9% 12%)',
               borderRadius: '0.875rem',
               padding: '2rem 1rem',
               textAlign: 'center',
@@ -447,26 +454,26 @@ function ProgressChartSection({
             <svg viewBox="0 0 400 180" style={{ width: '100%', height: 'auto', minWidth: 320, display: 'block' }}>
               <defs>
                 <linearGradient id="weightGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="hsl(158, 84%, 44%)" stopOpacity="0.4" />
-                  <stop offset="100%" stopColor="hsl(158, 84%, 44%)" stopOpacity="0.0" />
+                  <stop offset="0%" stopColor="#ef4444" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="#ef4444" stopOpacity="0.0" />
                 </linearGradient>
                 <linearGradient id="visitsGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="hsl(280, 80%, 65%)" stopOpacity="0.4" />
-                  <stop offset="100%" stopColor="hsl(280, 80%, 65%)" stopOpacity="0.0" />
+                  <stop offset="0%" stopColor="#dc2626" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="#dc2626" stopOpacity="0.0" />
                 </linearGradient>
               </defs>
 
-              <line x1="30" y1="40" x2="380" y2="40" stroke="hsl(224 18% 16%)" strokeDasharray="3 3" />
-              <line x1="30" y1="90" x2="380" y2="90" stroke="hsl(224 18% 16%)" strokeDasharray="3 3" />
-              <line x1="30" y1="140" x2="380" y2="140" stroke="hsl(224 18% 16%)" strokeDasharray="3 3" />
+              <line x1="30" y1="40" x2="380" y2="40" stroke="hsl(240 3.7% 15.9%)" strokeDasharray="3 3" />
+              <line x1="30" y1="90" x2="380" y2="90" stroke="hsl(240 3.7% 15.9%)" strokeDasharray="3 3" />
+              <line x1="30" y1="140" x2="380" y2="140" stroke="hsl(240 3.7% 15.9%)" strokeDasharray="3 3" />
 
               {areaD && <path d={areaD} fill={`url(#${gradientId})`} />}
               {pathD && <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />}
 
               {points.map((p, i) => (
                 <g key={i}>
-                  <circle cx={p.x} cy={p.y} r="5" fill="#0d0f14" stroke={strokeColor} strokeWidth="3" />
-                  <rect x={p.x - 24} y={p.y - 25} width="48" height="18" rx="4" fill="hsl(224 20% 7%)" stroke="hsl(224 18% 20%)" strokeWidth="1" />
+                  <circle cx={p.x} cy={p.y} r="5" fill="#09090b" stroke={strokeColor} strokeWidth="3" />
+                  <rect x={p.x - 24} y={p.y - 25} width="48" height="18" rx="4" fill="hsl(240 5.9% 10%)" stroke="hsl(240 3.7% 20%)" strokeWidth="1" />
                   <text x={p.x} y={p.y - 13} textAnchor="middle" fill="var(--text-primary)" fontSize="10" fontWeight="700">
                     {p.display}
                   </text>
@@ -626,7 +633,7 @@ export default function DashboardPage() {
           .from('members')
           .select('*')
           .eq('member_id', extractedId)
-          .maybeSingle<MemberRow>()
+          .maybeSingle()
 
         console.log("Fetched Member by member_id:", memberData, "Error:", memberError)
         activeMember = memberData
@@ -637,7 +644,7 @@ export default function DashboardPage() {
             .from('members')
             .select('*')
             .or(`auth_user_id.eq.${user.id},id.eq.${user.id}`)
-            .maybeSingle<MemberRow>()
+            .maybeSingle()
 
           console.log("Fallback Member Query:", fallbackMember, "Error:", fallbackError)
           activeMember = fallbackMember
@@ -1001,27 +1008,15 @@ export default function DashboardPage() {
               <div
                 className="dash-card"
                 style={{
-                  background: 'linear-gradient(135deg, hsl(224 20% 9%) 0%, hsl(224 20% 12%) 100%)',
+                  background: 'linear-gradient(135deg, hsl(240 10% 4%) 0%, hsl(240 5.9% 10%) 100%)',
                   borderRadius: '1.25rem',
                   padding: '1.5rem',
-                  border: '1px solid hsl(158 84% 44% / 0.25)',
-                  boxShadow: '0 8px 24px -6px rgba(0, 0, 0, 0.4)',
+                  border: '1px solid var(--bg-card-border)',
+                  boxShadow: '0 8px 24px -6px rgba(0, 0, 0, 0.6)',
                   position: 'relative',
                   overflow: 'hidden',
                 }}
               >
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: -40,
-                    right: -40,
-                    width: 140,
-                    height: 140,
-                    background: 'radial-gradient(circle, hsl(158 84% 44% / 0.15) 0%, transparent 70%)',
-                    pointerEvents: 'none',
-                  }}
-                />
-
                 {/* Card Header */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
@@ -1033,8 +1028,9 @@ export default function DashboardPage() {
                         width: 38,
                         height: 38,
                         borderRadius: '0.625rem',
-                        background: 'hsl(158 84% 44% / 0.15)',
-                        color: 'var(--brand-primary)',
+                        background: 'hsl(240 5.9% 14%)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid hsl(240 3.7% 20%)',
                       }}
                     >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 22, height: 22 }}>
@@ -1056,9 +1052,9 @@ export default function DashboardPage() {
                       fontWeight: 700,
                       padding: '0.35rem 0.75rem',
                       borderRadius: '1rem',
-                      background: isMemberActive ? 'hsl(158 84% 44% / 0.18)' : 'hsl(350 80% 18%)',
-                      color: isMemberActive ? 'var(--brand-primary)' : 'hsl(350 80% 65%)',
-                      border: `1px solid ${isMemberActive ? 'hsl(158 84% 44% / 0.4)' : 'hsl(350 80% 28%)'}`,
+                      background: 'hsl(240 5.9% 14%)',
+                      color: isMemberActive ? '#e4e4e7' : '#a1a1aa',
+                      border: '1px solid hsl(240 3.7% 22%)',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
                       display: 'flex',
@@ -1071,8 +1067,7 @@ export default function DashboardPage() {
                         width: 6,
                         height: 6,
                         borderRadius: '50%',
-                        backgroundColor: isMemberActive ? 'var(--brand-primary)' : 'hsl(350 80% 65%)',
-                        boxShadow: isMemberActive ? '0 0 8px var(--brand-primary)' : 'none',
+                        backgroundColor: isMemberActive ? '#10b981' : '#ef4444',
                       }}
                     />
                     {isMemberActive ? 'Active Membership' : 'No Active Membership'}
@@ -1083,7 +1078,7 @@ export default function DashboardPage() {
                 {isMemberActive ? (
                   <div>
                     {/* Active Plan details */}
-                    <div style={{ background: 'hsl(224 18% 13%)', borderRadius: '0.875rem', padding: '1.25rem', marginBottom: '1.25rem', border: '1px solid var(--bg-card-border)' }}>
+                    <div style={{ background: 'hsl(240 5.9% 12%)', borderRadius: '0.875rem', padding: '1.25rem', marginBottom: '1.25rem', border: '1px solid var(--bg-card-border)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
                         <div>
                           <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600 }}>
@@ -1098,9 +1093,9 @@ export default function DashboardPage() {
                           style={{
                             padding: '0.5rem 0.875rem',
                             borderRadius: '0.625rem',
-                            background: 'hsl(158 84% 44% / 0.15)',
-                            color: 'var(--brand-primary)',
-                            border: '1px solid hsl(158 84% 44% / 0.3)',
+                            background: 'hsl(240 5.9% 14%)',
+                            color: '#e4e4e7',
+                            border: '1px solid hsl(240 3.7% 22%)',
                             fontSize: '0.8125rem',
                             fontWeight: 700,
                             cursor: 'pointer',
@@ -1112,57 +1107,55 @@ export default function DashboardPage() {
                       </div>
 
                       {/* Activation & Expiry Dates */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px dashed hsl(224 18% 20%)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px dashed hsl(240 3.7% 20%)' }}>
                         <div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>Activation Date</span>
                           <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>{formatDate(joinDateIso)}</span>
                         </div>
                         <div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>Expiry Date</span>
-                          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: isExpiring ? 'hsl(350 80% 65%)' : 'var(--text-primary)' }}>
+                          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: isExpiring ? '#f87171' : 'var(--text-primary)' }}>
                             {formatDate(expiryDateIso)}
                           </span>
                         </div>
                       </div>
                     </div>
 
-                    {/* Progress Bar */}
-                    <div style={{ background: 'hsl(224 18% 13%)', borderRadius: '0.875rem', padding: '1rem 1.25rem', border: '1px solid var(--bg-card-border)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.625rem' }}>
-                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                          Duration Progress
-                        </span>
-                        <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: remainingDaysText.includes('Expired') ? 'hsl(350 80% 65%)' : 'var(--brand-primary)' }}>
-                          {remainingDaysText}
+                    {/* Prominent Duration Progress Section */}
+                    <div className="bg-zinc-900/50 p-5 rounded-2xl border border-zinc-800 flex flex-col gap-3 w-full shadow-lg">
+                      <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1.5">
+                        <div>
+                          <span className="text-xs font-semibold text-zinc-400 tracking-wider uppercase block mb-0.5">
+                            Time Remaining
+                          </span>
+                          <h3 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+                            {remainingDaysText}
+                          </h3>
+                        </div>
+                        <span className="text-xs font-bold text-zinc-400 self-start sm:self-auto bg-zinc-800/80 px-2.5 py-1 rounded-lg border border-zinc-700/60">
+                          {elapsedPercentage.toFixed(0)}% Elapsed
                         </span>
                       </div>
 
-                      <div style={{ height: '10px', width: '100%', borderRadius: '5px', backgroundColor: 'hsl(224 18% 7%)', overflow: 'hidden' }}>
+                      <div className="h-3.5 w-full rounded-full bg-zinc-800/80 p-0.5 overflow-hidden border border-zinc-700/40">
                         <div
-                          style={{
-                            height: '100%',
-                            width: `${elapsedPercentage}%`,
-                            background: remainingDaysText.includes('Expired')
-                              ? 'hsl(350 80% 58%)'
-                              : 'linear-gradient(90deg, hsl(158 84% 38%) 0%, hsl(158 84% 50%) 100%)',
-                            borderRadius: '5px',
-                            transition: 'width 0.4s ease',
-                            boxShadow: '0 0 10px var(--brand-primary-glow)',
-                          }}
+                          className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-amber-500 to-red-600 transition-all duration-500 shadow-md"
+                          style={{ width: `${Math.min(100, Math.max(0, elapsedPercentage))}%` }}
                         />
                       </div>
                     </div>
                   </div>
                 ) : (
                   /* Inactive State */
-                  <div style={{ background: 'hsl(224 18% 13%)', borderRadius: '0.875rem', padding: '1.5rem', textAlign: 'center', border: '1px solid var(--bg-card-border)' }}>
+                  <div style={{ background: 'hsl(240 5.9% 12%)', borderRadius: '0.875rem', padding: '1.5rem', textAlign: 'center', border: '1px solid var(--bg-card-border)' }}>
                     <div
                       style={{
                         width: '48px',
                         height: '48px',
                         borderRadius: '50%',
-                        background: 'rgba(239, 68, 68, 0.15)',
-                        color: '#ef4444',
+                        background: 'hsl(240 5.9% 14%)',
+                        color: 'var(--text-secondary)',
+                        border: '1px solid hsl(240 3.7% 20%)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -1187,13 +1180,13 @@ export default function DashboardPage() {
                       style={{
                         padding: '0.75rem 1.75rem',
                         borderRadius: '0.75rem',
-                        background: 'linear-gradient(135deg, hsl(158 84% 38%) 0%, hsl(158 84% 30%) 100%)',
+                        background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
                         color: '#fff',
                         fontWeight: 700,
                         fontSize: '0.9375rem',
-                        border: '1px solid hsl(158 84% 44% / 0.5)',
+                        border: '1px solid rgba(220, 38, 38, 0.5)',
                         cursor: 'pointer',
-                        boxShadow: '0 4px 15px var(--brand-primary-glow)',
+                        boxShadow: '0 4px 15px rgba(220, 38, 38, 0.35)',
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: '0.5rem',
@@ -1460,12 +1453,12 @@ export default function DashboardPage() {
               maxWidth: '780px',
               maxHeight: '90vh',
               overflowY: 'auto',
-              backgroundColor: '#0f172a',
-              border: '1px solid #1e293b',
+              backgroundColor: '#18181b',
+              border: '1px solid #27272a',
               borderRadius: '1.5rem',
               padding: '2rem',
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
-              color: '#f8fafc',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8)',
+              color: '#f4f4f5',
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1476,9 +1469,9 @@ export default function DashboardPage() {
                 position: 'absolute',
                 top: '1.25rem',
                 right: '1.25rem',
-                background: '#1e293b',
+                background: '#27272a',
                 border: 'none',
-                color: '#94a3b8',
+                color: '#a1a1aa',
                 width: '32px',
                 height: '32px',
                 borderRadius: '50%',
@@ -1497,18 +1490,18 @@ export default function DashboardPage() {
               <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff', marginBottom: '0.375rem' }}>
                 Membership Packages
               </h2>
-              <p style={{ fontSize: '0.875rem', color: '#94a3b8' }}>
+              <p style={{ fontSize: '0.875rem', color: '#a1a1aa' }}>
                 Select a package tier to send an instant activation request to Admin
               </p>
             </div>
 
             {loadingPackages ? (
-              <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+              <div style={{ textAlign: 'center', padding: '3rem 0', color: '#a1a1aa' }}>
                 Loading packages...
               </div>
             ) : packagesList.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#94a3b8', background: '#1e293b', borderRadius: '1rem' }}>
-                <p style={{ fontSize: '0.9375rem', marginBottom: '0.5rem', color: '#e2e8f0', fontWeight: 600 }}>
+              <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#a1a1aa', background: '#27272a', borderRadius: '1rem' }}>
+                <p style={{ fontSize: '0.9375rem', marginBottom: '0.5rem', color: '#e4e4e7', fontWeight: 600 }}>
                   No Membership Packages Found
                 </p>
                 <p style={{ fontSize: '0.8125rem' }}>
@@ -1533,10 +1526,10 @@ export default function DashboardPage() {
                     <div
                       key={pkg.id || idx}
                       style={{
-                        background: '#1e293b',
+                        background: '#27272a',
                         borderRadius: '1rem',
                         padding: '1.25rem',
-                        border: '1px solid #334155',
+                        border: '1px solid #3f3f46',
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
@@ -1553,9 +1546,9 @@ export default function DashboardPage() {
                             fontWeight: 700,
                             padding: '0.2rem 0.5rem',
                             borderRadius: '0.5rem',
-                            background: 'hsl(158 84% 44% / 0.2)',
-                            color: '#10b981',
-                            border: '1px solid hsl(158 84% 44% / 0.4)',
+                            background: 'rgba(239, 68, 68, 0.2)',
+                            color: '#ef4444',
+                            border: '1px solid rgba(239, 68, 68, 0.4)',
                           }}
                         >
                           {pkgBadge}
@@ -1566,11 +1559,11 @@ export default function DashboardPage() {
                         <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '0.5rem' }}>
                           {pkgName}
                         </h3>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#10b981', marginBottom: '0.75rem' }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#ef4444', marginBottom: '0.75rem' }}>
                           LKR {Number(pkgPrice).toLocaleString()}
                         </div>
                         {pkgDesc && (
-                          <p style={{ fontSize: '0.8125rem', color: '#94a3b8', lineHeight: 1.4, marginBottom: '1rem' }}>
+                          <p style={{ fontSize: '0.8125rem', color: '#a1a1aa', lineHeight: 1.4, marginBottom: '1rem' }}>
                             {pkgDesc}
                           </p>
                         )}
@@ -1578,8 +1571,8 @@ export default function DashboardPage() {
                         {featsList.length > 0 && (
                           <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 1.25rem 0', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                             {featsList.map((feat: string, fIdx: number) => (
-                              <li key={fIdx} style={{ fontSize: '0.8125rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <span style={{ color: '#10b981', fontWeight: 700 }}>✓</span> {feat}
+                              <li key={fIdx} style={{ fontSize: '0.8125rem', color: '#d4d4d8', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ color: '#ef4444', fontWeight: 700 }}>✓</span> {feat}
                               </li>
                             ))}
                           </ul>
@@ -1593,7 +1586,7 @@ export default function DashboardPage() {
                           width: '100%',
                           padding: '0.75rem 1rem',
                           borderRadius: '0.625rem',
-                          background: 'linear-gradient(135deg, hsl(158 84% 38%) 0%, hsl(158 84% 30%) 100%)',
+                          background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
                           color: '#fff',
                           fontWeight: 700,
                           fontSize: '0.875rem',

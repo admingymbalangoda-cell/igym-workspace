@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Clock, User, Flame, CalendarCheck } from "lucide-react";
+import { Clock, User, Flame } from "lucide-react";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -18,7 +18,7 @@ const scheduleData = [
   { day: "Friday", time: "05:00 PM - 06:30 PM", title: "Friday Night Fat Shred", coach: "Coach Dilini", category: "HIIT", intensity: "High" },
   { day: "Saturday", time: "07:00 AM - 08:30 AM", title: "Weekend Warrior Powerlifter", coach: "Head Coach Kasun", category: "Strength", intensity: "Extreme" },
   { day: "Saturday", time: "04:00 PM - 05:30 PM", title: "Calisthenics & Mobility", coach: "Coach Amanda", category: "Bodyweight", intensity: "Medium" },
-  { day: "Sunday", time: "08:00 AM - 09:30 AM", title: "Active Recovery & Steam Sauna", coach: "Team iGYM", category: "Recovery", intensity: "Low" },
+  { day: "Sunday", time: "08:00 AM - 09:30 AM", title: "Active Recovery & Steam Sauna", coach: "Team IGYM", category: "Recovery", intensity: "Low" },
 ];
 
 export default function ScheduleSection() {
@@ -27,12 +27,12 @@ export default function ScheduleSection() {
   const filtered = scheduleData.filter((item) => item.day === selectedDay);
 
   return (
-    <section id="schedule" className="py-24 relative bg-[#0b0f17]">
+    <section id="schedule" className="py-24 relative bg-zinc-900/60 border-t border-zinc-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center max-w-3xl mx-auto mb-14">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-[#00f2fe] mb-3">WEEKLY CLASS TIMETABLE</h2>
+          <h2 className="text-xs font-bold uppercase tracking-widest text-red-500 mb-3">WEEKLY CLASS TIMETABLE</h2>
           <p className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-            WORKOUT SCHEDULE AT iGYM
+            WORKOUT SCHEDULE AT IGYM
           </p>
           <p className="mt-3 text-slate-400 text-base">
             Select a day to view scheduled guided workout sessions led by certified fitness coaches.
@@ -47,8 +47,8 @@ export default function ScheduleSection() {
               onClick={() => setSelectedDay(day)}
               className={`px-5 py-3 rounded-xl text-sm font-bold whitespace-nowrap transition-all ${
                 selectedDay === day
-                  ? "bg-gradient-to-r from-[#00f2fe] to-[#4facfe] text-slate-950 shadow-lg shadow-[#00f2fe]/20"
-                  : "glass-card text-slate-300 hover:text-white hover:border-white/20"
+                  ? "bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-lg shadow-red-600/30"
+                  : "glass-card text-slate-300 hover:text-white hover:border-zinc-700 border border-zinc-800"
               }`}
             >
               {day}
@@ -62,18 +62,18 @@ export default function ScheduleSection() {
             filtered.map((item, idx) => (
               <div
                 key={idx}
-                className="glass-card p-6 rounded-2xl border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 group hover:border-[#00f2fe]/40 transition-all"
+                className="glass-card p-6 rounded-2xl border border-zinc-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 group hover:border-red-500/50 transition-all bg-zinc-900/50 shadow-md"
               >
                 <div className="space-y-2">
                   <div className="flex items-center gap-3">
-                    <span className="px-2.5 py-1 rounded-md bg-[#00f2fe]/10 text-[#00f2fe] text-xs font-bold uppercase tracking-wide">
+                    <span className="px-2.5 py-1 rounded-md bg-red-500/10 text-red-500 text-xs font-bold uppercase tracking-wide border border-red-500/25">
                       {item.category}
                     </span>
                     <span className="text-xs font-semibold text-orange-400 flex items-center gap-1">
                       <Flame className="w-3.5 h-3.5" /> {item.intensity} Intensity
                     </span>
                   </div>
-                  <h3 className="text-xl font-bold text-white group-hover:text-[#00f2fe] transition-colors">
+                  <h3 className="text-xl font-bold text-white group-hover:text-red-500 transition-colors">
                     {item.title}
                   </h3>
                   <div className="flex items-center gap-4 text-xs text-slate-400">
@@ -90,14 +90,14 @@ export default function ScheduleSection() {
 
                 <a
                   href="#pricing"
-                  className="px-4 py-2 text-xs font-bold text-slate-950 bg-[#00f2fe] rounded-lg shadow hover:bg-[#4facfe] transition-all whitespace-nowrap"
+                  className="px-4 py-2 text-xs font-bold text-white bg-red-600 rounded-lg shadow hover:bg-red-700 shadow-red-600/20 transition-all whitespace-nowrap"
                 >
                   Book Slot
                 </a>
               </div>
             ))
           ) : (
-            <div className="col-span-2 text-center py-12 glass-card rounded-2xl text-slate-400">
+            <div className="col-span-2 text-center py-12 glass-card rounded-2xl text-slate-400 border border-zinc-800">
               No classes scheduled for {selectedDay}. Open floor training available 05:00 AM - 10:00 PM.
             </div>
           )}

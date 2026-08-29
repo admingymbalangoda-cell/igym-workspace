@@ -12,8 +12,11 @@ import { createMemberAction, importMembersCSVAction, resetMemberPasswordAction, 
 const RecordExpenseModal = dynamicImport(() => import("./components/RecordExpenseModal"), { ssr: false });
 const PackagePricingModal = dynamicImport(() => import("./components/PackagePricingModal"), { ssr: false });
 const ActiveRateModal = dynamicImport(() => import("./components/ActiveRateModal"), { ssr: false });
+const WebsiteSettingsView = dynamicImport(() => import("./components/WebsiteSettingsView"), { ssr: false });
 
 import {
+  ArrowLeft,
+  Globe,
   LayoutDashboard,
   Users,
   CalendarCheck,
@@ -247,6 +250,8 @@ export interface PaymentRecord {
   receiptSent?: boolean;
   paidAmount?: number;
   balanceDue?: number;
+  recordedBy?: string;
+  recorded_by?: string;
 }
 
 export interface ExpenseRecord {
@@ -336,6 +341,7 @@ export default function Home() {
     if (path.startsWith("/dashboard/coaches")) return "Coaches";
     if (path.startsWith("/dashboard/members")) return "Members";
     if (path.startsWith("/dashboard/payments")) return "Payments";
+    if (path.startsWith("/dashboard/website-settings")) return "Website Settings";
     if (path.startsWith("/dashboard/settings")) return "Settings";
     if (path.startsWith("/dashboard/qr") || path.startsWith("/dashboard/backup")) return "Backup / QR";
     return "Overview";
@@ -352,10 +358,11 @@ export default function Home() {
     else if (tabName === "Coaches") targetPath = "/dashboard/coaches";
     else if (tabName === "Members") targetPath = "/dashboard/members";
     else if (tabName === "Payments") targetPath = "/dashboard/payments";
+    else if (tabName === "Website Settings") targetPath = "/dashboard/website-settings";
     else if (tabName === "Settings") targetPath = "/dashboard/settings";
     else if (tabName === "Backup / QR") targetPath = "/dashboard/qr";
 
-    if ((tabName === "Settings" || tabName === "Payments") && currentUserRole === "STAFF") {
+    if (tabName === "Settings" && currentUserRole === "STAFF") {
       setShowRbacSecurityAlert(true);
       setTimeout(() => setShowRbacSecurityAlert(false), 4000);
       router.push("/dashboard");
@@ -500,9 +507,26 @@ export default function Home() {
 
 
 
+  const parseSpecializationToArray = (spec: string | string[]): string[] => {
+    if (Array.isArray(spec)) return spec;
+    if (!spec) return ["Bodybuilding & Muscle Gain"];
+    const parsed = spec.split(",").map((s) => s.trim()).filter(Boolean);
+    return parsed.length > 0 ? parsed : ["Bodybuilding & Muscle Gain"];
+  };
+
+  const AVAILABLE_SPECIALIZATIONS = [
+    "Bodybuilding & Muscle Gain",
+    "Fat Loss & HIIT Conditioning",
+    "CrossFit & Strength Training",
+    "Yoga & Mobility Specialist",
+    "Powerlifting & Heavy Compound",
+    "Personal Training & Fitness",
+    "Nutrition & Meal Planning",
+  ];
+
   const [coachFormData, setCoachFormData] = useState({
     name: "",
-    specialization: "Bodybuilding & Strength",
+    specialization: ["Bodybuilding & Muscle Gain"] as string[],
     phone: "",
     email: "",
     experience: "3+ Years",
@@ -543,15 +567,47 @@ export default function Home() {
     }
   };
 
+  // Unassign Trainee from Coach in Supabase & Local State
+  const handleRemoveTrainee = async (traineeId: string, traineeDbUuid?: string) => {
+    try {
+      const { error } = await supabase
+        .from("members")
+        .update({ coach_id: null })
+        .or(`id.eq.${traineeDbUuid || traineeId},member_id.eq.${traineeId}`);
+
+      if (error) {
+        console.error("Failed to unassign coach from member:", error.message);
+      }
+
+      setMembers((prev) =>
+        prev.map((m) => {
+          if (m.id === traineeId || (traineeDbUuid && m.dbUuid === traineeDbUuid)) {
+            return { ...m, coachId: undefined, coachName: undefined };
+          }
+          return m;
+        })
+      );
+
+      setToastMessage("✅ Trainee unassigned from coach successfully!");
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (err: any) {
+      console.error("Exception unassigning trainee:", err);
+    }
+  };
+
   // Submit New / Edit Coach with direct Supabase CRUD
   const handleCoachSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!coachFormData.name) return;
 
+    const specializationString = Array.isArray(coachFormData.specialization)
+      ? coachFormData.specialization.join(", ")
+      : (coachFormData.specialization || "Bodybuilding & Muscle Gain");
+
     if (editingCoach) {
       const updatePayload = {
         name: coachFormData.name,
-        specialization: coachFormData.specialization,
+        specialization: specializationString,
         phone: coachFormData.phone,
         email: coachFormData.email,
         experience: coachFormData.experience,
@@ -584,7 +640,7 @@ export default function Home() {
               ? {
                   ...c,
                   name: coachFormData.name,
-                  specialization: coachFormData.specialization,
+                  specialization: specializationString,
                   phone: coachFormData.phone,
                   email: coachFormData.email,
                   experience: coachFormData.experience,
@@ -606,7 +662,7 @@ export default function Home() {
       const insertPayload = {
         coach_id: newId,
         name: coachFormData.name,
-        specialization: coachFormData.specialization,
+        specialization: specializationString,
         phone: coachFormData.phone || "N/A",
         email: coachFormData.email || "N/A",
         experience: coachFormData.experience || "1+ Year",
@@ -955,7 +1011,7 @@ export default function Home() {
   const defaultOfficialGymPackages: GymPackage[] = [
     {
       id: "pkg-1",
-      name: "Admission Fee (ප්‍රවේශ ගාස්තු)",
+      name: "Admission Fee",
       price: 1500,
       billingCycle: "Daily",
       description: "One-time registration fee for new members joining iGYM Fitness Center",
@@ -1673,6 +1729,14 @@ export default function Home() {
 
   // RBAC & Auth System State
   const [currentUserRole, setCurrentUserRole] = useState<"SUPER_ADMIN" | "ADMIN" | "STAFF">("SUPER_ADMIN");
+  
+  const getRoleDisplayName = (roleStr: string) => {
+    const r = (roleStr || "").toString().trim().toLowerCase();
+    if (r === "owner" || r === "super_admin") return "Owner";
+    if (r === "developer" || r === "admin") return "Developer";
+    if (r === "staff") return "Admin";
+    return "Admin";
+  };
   const [currentUserName, setCurrentUserName] = useState("Chathura (Owner)");
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
   const [loginEmail, setLoginEmail] = useState("");
@@ -1701,12 +1765,15 @@ export default function Home() {
 
   // Enforce RBAC Tab Protection Effect for STAFF role
   useEffect(() => {
-    if (currentUserRole === "STAFF" && (activeTab === "Payments" || activeTab === "Settings")) {
-      router.push("/dashboard");
+    if (
+      currentUserRole === "STAFF" &&
+      (activeTab === "Coaches" || activeTab === "Member Chat" || activeTab === "Settings" || activeTab === "Website Settings")
+    ) {
+      handleTabChange("Overview");
       setShowRbacSecurityAlert(true);
       setTimeout(() => setShowRbacSecurityAlert(false), 4000);
     }
-  }, [currentUserRole, activeTab, router]);
+  }, [currentUserRole, activeTab]);
 
   // Supabase Auth State & Session Management
   const [authUser, setAuthUser] = useState<any>(null);
@@ -2032,6 +2099,8 @@ export default function Home() {
               receiptSent: p.receipt_sent !== undefined && p.receipt_sent !== null ? !!p.receipt_sent : !!p.reminder_sent,
               paidAmount: p.paid_amount !== null && p.paid_amount !== undefined ? Number(p.paid_amount) : Number(p.amount) || 0,
               balanceDue: p.balance_due !== null && p.balance_due !== undefined ? Number(p.balance_due) : 0,
+              recordedBy: p.recorded_by || p.recordedBy || "System",
+              recorded_by: p.recorded_by || p.recordedBy || "System",
             };
           });
           setPaymentRecords(parsedDb);
@@ -2082,12 +2151,19 @@ export default function Home() {
           if (!msgFetchErr && dbMessages && dbMessages.length > 0) {
             setChatConversations((prevConvs) => {
               const messagesByMember: Record<string, ChatMessage[]> = {};
+              const unreadCountsByMember: Record<string, number> = {};
+
               dbMessages.forEach((m: any) => {
                 const isFromAdmin = String(m.sender_id || m.sender || "").toLowerCase() === "admin";
                 const rawKey = isFromAdmin
                   ? String(m.receiver_id || m.member_id || "MEM001").trim()
                   : String(m.sender_id || m.member_id || "MEM001").trim();
                 const memberKey = rawKey.toUpperCase().replace(/^MEM-/, "MEM");
+
+                const isRead = m.is_read === true || (m.read_at !== null && m.read_at !== undefined && m.read_at !== "");
+                if (!isFromAdmin && !isRead) {
+                  unreadCountsByMember[memberKey] = (unreadCountsByMember[memberKey] || 0) + 1;
+                }
 
                 const rawCreated = m.created_at || new Date().toISOString();
                 const createdTimeMs = new Date(rawCreated).getTime();
@@ -2111,9 +2187,12 @@ export default function Home() {
                 const existingIdx = updatedConvs.findIndex(
                   (c) => c.memberId.toUpperCase().replace(/^MEM-/, "MEM") === memKey
                 );
+                const unreadCnt = unreadCountsByMember[memKey] || 0;
+
                 if (existingIdx >= 0) {
                   updatedConvs[existingIdx] = {
                     ...updatedConvs[existingIdx],
+                    unreadCount: unreadCnt,
                     messages: msgs,
                   };
                 } else {
@@ -2125,7 +2204,7 @@ export default function Home() {
                     tier: "Standard",
                     status: "Online",
                     lastActive: "Recently",
-                    unreadCount: 0,
+                    unreadCount: unreadCnt,
                     messages: msgs,
                   });
                 }
@@ -2279,32 +2358,35 @@ export default function Home() {
 
   // Live Member Chat State
   const [activeChatMemberId, setActiveChatMemberId] = useState<string>("MEM-001");
+  const [isMobileChatView, setIsMobileChatView] = useState<boolean>(false);
   const [chatInputText, setChatInputText] = useState("");
   const [chatSearchQuery, setChatSearchQuery] = useState("");
   const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
 
-  // Compute Recent Member Messages list for Overview Widget
+  // Compute Recent Member Messages list for Overview Widget (Strictly Unread Feed)
   const recentMemberMessagesList = useMemo(() => {
     const list: RecentMemberMessage[] = [];
 
     chatConversations.forEach((conv) => {
-      const memberMsgs = conv.messages.filter((m) => m.sender === "member");
-      if (memberMsgs.length > 0) {
-        const lastMsg = memberMsgs[memberMsgs.length - 1];
-        const targetMem = members.find((m) => m.id === conv.memberId || m.memberId === conv.memberId);
-        const avatar =
-          targetMem?.profilePicUrl ||
-          targetMem?.profile_pic_url ||
-          `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80`;
+      if (conv.unreadCount > 0) {
+        const memberMsgs = conv.messages.filter((m) => m.sender === "member");
+        if (memberMsgs.length > 0) {
+          const lastMsg = memberMsgs[memberMsgs.length - 1];
+          const targetMem = members.find((m) => m.id === conv.memberId || m.memberId === conv.memberId);
+          const avatar =
+            targetMem?.profilePicUrl ||
+            targetMem?.profile_pic_url ||
+            `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80`;
 
-        list.push({
-          id: lastMsg.id,
-          memberId: conv.memberId,
-          memberName: conv.memberName || targetMem?.name || "Member",
-          avatarUrl: avatar,
-          messageText: lastMsg.text,
-          timestamp: lastMsg.timestamp,
-        });
+          list.push({
+            id: lastMsg.id,
+            memberId: conv.memberId,
+            memberName: conv.memberName || targetMem?.name || "Member",
+            avatarUrl: avatar,
+            messageText: lastMsg.text,
+            timestamp: lastMsg.timestamp,
+          });
+        }
       }
     });
 
@@ -2709,11 +2791,31 @@ export default function Home() {
     durationMonths: 1,
     amount: 3500,
     paidAmount: 3500,
+    paymentDate: new Date().toISOString().split("T")[0],
+    includeAdmissionFee: false,
     method: "Cash" as "Cash" | "Card POS" | "Bank Transfer" | "Online",
     sendReceiptAlert: true,
     itemDescription: "",
     gymRevenuePercentage: 20,
   });
+
+  // Delete single payment record from Supabase DB FIRST, then update UI state & refresh data
+  const handleDeletePayment = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this payment record?")) return;
+    try {
+      // Execute Supabase delete query FIRST
+      const { error } = await supabase.from("payments").delete().eq("id", id);
+      if (error) {
+        alert(`Failed to delete payment: ${error.message}`);
+        return;
+      }
+      // Update local state and refresh dashboard data
+      setPaymentRecords((prev) => prev.filter((p) => p.id !== id));
+      await fetchFinancialData();
+    } catch (err: any) {
+      alert(`Error deleting payment: ${err?.message || err}`);
+    }
+  };
 
   // Action: Send Automated WhatsApp / SMS Reminder
   const handleSendReminder = async (payId: string, channel: "WhatsApp" | "SMS" | "App Push") => {
@@ -3219,6 +3321,7 @@ export default function Home() {
     const isReceiptSent = !isWalkIn && !!paymentFormData.sendReceiptAlert && chatSuccess;
     const resolvedPaidAmount = Number(paymentFormData.paidAmount ?? resolvedAmount);
     const resolvedBalanceDue = Math.max(0, resolvedAmount - resolvedPaidAmount);
+    const recordedByRole = getRoleDisplayName(currentUserRole) || currentUserRole || "System";
 
     const basePayload: any = {
       member_id: memberIdForDb,
@@ -3233,6 +3336,7 @@ export default function Home() {
       gym_revenue_percentage: gymPercentage,
       gym_revenue_amount: gymAmount,
       receipt_sent: isReceiptSent,
+      recorded_by: recordedByRole,
     };
 
     const fullPayload: any = {
@@ -3246,6 +3350,7 @@ export default function Home() {
       status: resolvedBalanceDue > 0 ? "Partial" : "Paid",
       reminder_sent: isReceiptSent,
       receipt_sent: isReceiptSent,
+      recorded_by: recordedByRole,
     };
 
     // 2. Asynchronously INSERT into Supabase `payments` table
@@ -3258,7 +3363,7 @@ export default function Home() {
         const { error: baseErr } = await supabase.from("payments").insert([basePayload]);
 
         if (baseErr) {
-          const fallbackPayload = { ...basePayload, member_id: memberIdForDb };
+          const fallbackPayload = { ...basePayload, member_id: memberIdForDb, recorded_by: recordedByRole };
           const { error: fallbackErr } = await supabase.from("payments").insert([fallbackPayload]);
 
           if (fallbackErr) {
@@ -3335,10 +3440,35 @@ export default function Home() {
       reminderSent: isReceiptSent,
       receiptSent: isReceiptSent,
       reminderChannel: isReceiptSent ? "Member App Chat" : undefined,
+      recordedBy: recordedByRole,
+      recorded_by: recordedByRole,
     };
 
     const updated = [newPay, ...paymentRecords];
     setPaymentRecords(updated);
+
+    // 5. Success UI Feedback & Form Clear
+    alert(`Payment recorded successfully! Invoice: ${generatedInvoice}`);
+
+    const defaultMem = members[0];
+    const defaultCat = defaultMem?.tier && gymPackages.some((p) => p.name === defaultMem.tier) ? defaultMem.tier : "Men (Without Treadmills)";
+    const defaultCalc = calculatePaymentAmount(defaultCat, 1);
+
+    setPaymentFormData({
+      memberId: defaultMem?.id || "",
+      externalPayerName: "",
+      category: defaultCat,
+      durationMonths: 1,
+      amount: defaultCalc.finalAmount,
+      paidAmount: defaultCalc.finalAmount,
+      paymentDate: new Date().toISOString().split("T")[0],
+      includeAdmissionFee: false,
+      method: "Cash",
+      sendReceiptAlert: true,
+      itemDescription: "",
+      gymRevenuePercentage: 20,
+    });
+    setMemberComboboxQuery("");
 
     setIsRecordPaymentModalOpen(false);
     setIsMemberComboboxOpen(false);
@@ -3389,8 +3519,8 @@ export default function Home() {
     password: "",
     phone: "",
     address: "",
-    height: "",
-    weight: "",
+    height: 0,
+    weight: 0,
     targetWeight: "",
     tier: "Standard",
     status: "Active",
@@ -4012,15 +4142,21 @@ export default function Home() {
     { name: "Payments", icon: CreditCard, color: "text-amber-400" },
     { name: "Coaches", icon: UserCheck, color: "text-amber-400" },
     { name: "Member Chat", icon: MessageCircle, color: "text-emerald-400" },
+    { name: "Website Settings", icon: Globe, color: "text-pink-400" },
     { name: "Settings", icon: Settings, color: "text-zinc-400" },
   ];
 
   // RBAC Navigation Filtering:
-  // Both 'owner' (SUPER_ADMIN) and 'developer' (ADMIN) have FULL ACCESS to all sections including Settings & Payments.
-  // ONLY 'staff' (STAFF) role is restricted from Payments and Settings.
+  // Both 'owner' (SUPER_ADMIN) and 'developer' (ADMIN) have FULL ACCESS to all sections.
+  // STAFF role has access to Overview, Members, and Payments (Record Fee Payment mode), but Coaches, Member Chat, Settings & Website Settings are hidden.
   const visibleMenuItems = menuItems.filter((item) => {
     if (currentUserRole === "STAFF") {
-      if (item.name === "Payments" || item.name === "Settings") {
+      if (
+        item.name === "Coaches" ||
+        item.name === "Member Chat" ||
+        item.name === "Settings" ||
+        item.name === "Website Settings"
+      ) {
         return false;
       }
     }
@@ -4464,15 +4600,15 @@ export default function Home() {
             <div className="flex items-center gap-2.5 pl-3 border-l border-zinc-800">
               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-cyan-500 to-purple-600 p-0.5 shadow-md">
                 <div className="w-full h-full bg-[#090b12] rounded-full flex items-center justify-center font-bold text-xs text-cyan-300">
-                  {currentUserName.charAt(0)}
+                  {getRoleDisplayName(currentUserRole).charAt(0)}
                 </div>
               </div>
               <div className="hidden sm:flex flex-col text-right">
-                <span className="text-xs font-bold text-white truncate max-w-[160px]">
-                  {currentUserName}
+                <span className="text-xs font-black text-white truncate max-w-[160px]">
+                  {getRoleDisplayName(currentUserRole)}
                 </span>
                 <span className="text-[10px] text-cyan-400 font-mono font-semibold">
-                  {currentUserRole === "SUPER_ADMIN" ? "Owner (Full Access)" : currentUserRole === "ADMIN" ? "Developer (Full Access)" : "Staff Member"}
+                  Role
                 </span>
               </div>
               <button
@@ -4614,72 +4750,76 @@ export default function Home() {
                 </button>
 
                 {/* Card 2: Expiring Soon (NEON AMBER / YELLOW) */}
-                <button
-                  onClick={() => setIsActiveRateModalOpen(true)}
-                  className="bg-[#18150d] border border-amber-500/30 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-amber-950/20 hover:border-amber-400/80 hover:bg-[#201c12] transition-all group text-left cursor-pointer relative"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="p-2.5 rounded-xl bg-amber-950/80 border border-amber-500/40 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)]">
-                      <Clock className="w-4 h-4" />
-                    </div>
-                    <span className="text-[10px] font-extrabold text-amber-300 bg-amber-500/20 px-2.5 py-1 rounded-full border border-amber-400/40 shadow-[0_0_8px_rgba(245,158,11,0.25)] flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3 text-amber-400" />
-                      <span>Expiring in 7 Days</span>
-                    </span>
-                  </div>
-                  <div className="mt-4">
-                    <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight group-hover:text-amber-200 transition-colors flex items-center justify-between">
-                      <span>
-                        {paymentRecords.filter((p) => p.status === "Due Soon").length ||
-                          members.filter((m) => m.status === "Inactive").length}
+                {currentUserRole !== "STAFF" && (
+                  <button
+                    onClick={() => setIsActiveRateModalOpen(true)}
+                    className="bg-[#18150d] border border-amber-500/30 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-amber-950/20 hover:border-amber-400/80 hover:bg-[#201c12] transition-all group text-left cursor-pointer relative"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="p-2.5 rounded-xl bg-amber-950/80 border border-amber-500/40 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)]">
+                        <Clock className="w-4 h-4" />
+                      </div>
+                      <span className="text-[10px] font-extrabold text-amber-300 bg-amber-500/20 px-2.5 py-1 rounded-full border border-amber-400/40 shadow-[0_0_8px_rgba(245,158,11,0.25)] flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 text-amber-400" />
+                        <span>Expiring in 7 Days</span>
                       </span>
-                      <span className="text-[10px] font-semibold text-amber-400 underline">Check List →</span>
                     </div>
-                    <div className="text-xs text-amber-400/80 font-semibold uppercase tracking-wider mt-1">
-                      Expiring Soon
+                    <div className="mt-4">
+                      <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight group-hover:text-amber-200 transition-colors flex items-center justify-between">
+                        <span>
+                          {paymentRecords.filter((p) => p.status === "Due Soon").length ||
+                            members.filter((m) => m.status === "Inactive").length}
+                        </span>
+                        <span className="text-[10px] font-semibold text-amber-400 underline">Check List →</span>
+                      </div>
+                      <div className="text-xs text-amber-400/80 font-semibold uppercase tracking-wider mt-1">
+                        Expiring Soon
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                )}
 
                 {/* Card 3: Pending Payments (NEON RED / ROSE) */}
-                {(() => {
-                  const pendingCountList = members.filter((m) => {
-                    const isStatusInactive = String(m.status || "").toLowerCase().trim() === "inactive";
-                    const expVal = m.expiry_date || m.expiryDate;
-                    const isExpiredDate = expVal ? new Date(expVal) < new Date() : false;
-                    return isStatusInactive || isExpiredDate;
-                  });
+                {currentUserRole !== "STAFF" && (
+                  (() => {
+                    const pendingCountList = members.filter((m) => {
+                      const isStatusInactive = String(m.status || "").toLowerCase().trim() === "inactive";
+                      const expVal = m.expiry_date || m.expiryDate;
+                      const isExpiredDate = expVal ? new Date(expVal) < new Date() : false;
+                      return isStatusInactive || isExpiredDate;
+                    });
 
-                  const totalOutstandingBalance = paymentRecords.reduce(
-                    (sum, p) => sum + (Number(p.balanceDue) || 0),
-                    0
-                  );
+                    const totalOutstandingBalance = paymentRecords.reduce(
+                      (sum, p) => sum + (Number(p.balanceDue) || 0),
+                      0
+                    );
 
-                  return (
-                    <button
-                      onClick={() => setIsPendingPaymentsModalOpen(true)}
-                      className="bg-[#1a0e12] border border-rose-500/30 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-rose-950/20 hover:border-rose-400/80 hover:bg-[#221217] transition-all group text-left cursor-pointer relative"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.25)]">
-                          <CreditCard className="w-4 h-4" />
+                    return (
+                      <button
+                        onClick={() => setIsPendingPaymentsModalOpen(true)}
+                        className="bg-[#1a0e12] border border-rose-500/30 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-rose-950/20 hover:border-rose-400/80 hover:bg-[#221217] transition-all group text-left cursor-pointer relative"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.25)]">
+                            <CreditCard className="w-4 h-4" />
+                          </div>
+                          <span className="text-[10px] font-extrabold text-rose-300 bg-rose-500/20 px-2.5 py-1 rounded-full border border-rose-400/40 shadow-[0_0_8px_rgba(244,63,94,0.25)] flex items-center gap-1 font-mono">
+                            <span>Rs. {totalOutstandingBalance.toLocaleString()} Due</span>
+                          </span>
                         </div>
-                        <span className="text-[10px] font-extrabold text-rose-300 bg-rose-500/20 px-2.5 py-1 rounded-full border border-rose-400/40 shadow-[0_0_8px_rgba(244,63,94,0.25)] flex items-center gap-1 font-mono">
-                          <span>Rs. {totalOutstandingBalance.toLocaleString()} Due</span>
-                        </span>
-                      </div>
-                      <div className="mt-4">
-                        <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight group-hover:text-rose-200 transition-colors flex items-center justify-between">
-                          <span>{pendingCountList.length}</span>
-                          <span className="text-[10px] font-semibold text-rose-400 underline">View Due →</span>
+                        <div className="mt-4">
+                          <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight group-hover:text-rose-200 transition-colors flex items-center justify-between">
+                            <span>{pendingCountList.length}</span>
+                            <span className="text-[10px] font-semibold text-rose-400 underline">View Due →</span>
+                          </div>
+                          <div className="text-xs text-rose-400/80 font-semibold uppercase tracking-wider mt-1">
+                            Pending Payments
+                          </div>
                         </div>
-                        <div className="text-xs text-rose-400/80 font-semibold uppercase tracking-wider mt-1">
-                          Pending Payments
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })()}
+                      </button>
+                    );
+                  })()
+                )}
 
                 {/* Card 4: Monthly Revenue (NEON CYAN / GOLD) */}
                 {currentUserRole !== "STAFF" && (
@@ -4724,7 +4864,7 @@ export default function Home() {
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 border-b border-cyan-950/60 pb-3">
                       <div>
                         <h3 className="text-sm sm:text-base font-bold text-white tracking-wide flex items-center gap-2">
-                          <BarChart3 className="w-4 h-4 text-cyan-400" /> Revenue & Expenses Trend (ආදායම් සහ වියදම් සැසඳීම)
+                          <BarChart3 className="w-4 h-4 text-cyan-400" /> Revenue & Expenses Trend
                         </h3>
                         <p className="text-xs text-zinc-400 mt-0.5">
                           Side-by-side monthly financial performance & net profit calculator.
@@ -4735,11 +4875,11 @@ export default function Home() {
                       <div className="flex items-center gap-4 text-xs font-semibold shrink-0">
                         <div className="flex items-center gap-1.5 bg-cyan-500/10 px-2.5 py-1 rounded-lg border border-cyan-500/30">
                           <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]" />
-                          <span className="text-cyan-300">Income (ගෙවීම්)</span>
+                          <span className="text-cyan-300">Income</span>
                         </div>
                         <div className="flex items-center gap-1.5 bg-rose-500/10 px-2.5 py-1 rounded-lg border border-rose-500/30">
                           <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]" />
-                          <span className="text-rose-300">Expenses (වියදම්)</span>
+                          <span className="text-rose-300">Expenses</span>
                         </div>
                       </div>
                     </div>
@@ -4994,154 +5134,156 @@ export default function Home() {
                 )}
 
                 {/* Right Side Panel: Recent Payments Feed */}
-                <div
-                  className={`${
-                    currentUserRole === "STAFF" ? "lg:col-span-3" : "lg:col-span-1"
-                  } bg-[#0d141e] border border-cyan-500/30 rounded-2xl p-5 shadow-lg shadow-cyan-950/20 flex flex-col justify-between`}
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse" />
-                      <h3 className="text-sm sm:text-base font-bold text-white tracking-wide">Recent Payments Feed</h3>
-                    </div>
-                    <button
-                      onClick={() => handleTabChange("Payments")}
-                      className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition-colors bg-cyan-500/10 px-2.5 py-1 rounded-lg border border-cyan-500/30"
-                    >
-                      View All <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  <div className="divide-y divide-cyan-950/50 space-y-2">
-                    {paymentRecords.slice(0, 5).length === 0 ? (
-                      /* ELEGANT EMPTY STATE FOR RECENT PAYMENTS */
-                      <div className="py-12 px-4 text-center space-y-2">
-                        <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mx-auto">
-                          <CreditCard className="w-5 h-5 opacity-60" />
-                        </div>
-                        <h4 className="text-xs font-bold text-white">No Recent Payments Today</h4>
-                        <p className="text-[11px] text-zinc-400">
-                          New fee payment entries recorded will automatically display live in this feed.
-                        </p>
+                {currentUserRole !== "STAFF" && (
+                  <div className="lg:col-span-1 bg-[#0d141e] border border-cyan-500/30 rounded-2xl p-5 shadow-lg shadow-cyan-950/20 flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse" />
+                        <h3 className="text-sm sm:text-base font-bold text-white tracking-wide">Recent Payments Feed</h3>
                       </div>
-                    ) : (
-                      paymentRecords.slice(0, 5).map((item) => (
-                        <div key={item.id} className="pt-2.5 first:pt-0 flex items-center justify-between">
-                          <div className="flex items-start gap-3">
-                            <div className="mt-0.5 p-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.25)]">
-                              <CreditCard className="w-3.5 h-3.5" />
-                            </div>
-                            <div>
-                              <h4 className="text-xs sm:text-sm font-semibold text-white leading-snug">
-                                {item.memberName}
-                              </h4>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-[10px] text-cyan-300 bg-cyan-500/15 px-2 py-0.5 rounded border border-cyan-500/30">
-                                  {item.category}
-                                </span>
-                                <span className="text-[10px] text-zinc-400 font-mono">{item.paymentDate}</span>
+                      <button
+                        onClick={() => handleTabChange("Payments")}
+                        className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition-colors bg-cyan-500/10 px-2.5 py-1 rounded-lg border border-cyan-500/30"
+                      >
+                        View All <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="divide-y divide-cyan-950/50 space-y-2">
+                      {paymentRecords.slice(0, 5).length === 0 ? (
+                        /* ELEGANT EMPTY STATE FOR RECENT PAYMENTS */
+                        <div className="py-12 px-4 text-center space-y-2">
+                          <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mx-auto">
+                            <CreditCard className="w-5 h-5 opacity-60" />
+                          </div>
+                          <h4 className="text-xs font-bold text-white">No Recent Payments Today</h4>
+                          <p className="text-[11px] text-zinc-400">
+                            New fee payment entries recorded will automatically display live in this feed.
+                          </p>
+                        </div>
+                      ) : (
+                        paymentRecords.slice(0, 5).map((item) => (
+                          <div key={item.id} className="pt-2.5 first:pt-0 flex items-center justify-between">
+                            <div className="flex items-start gap-3">
+                              <div className="mt-0.5 p-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.25)]">
+                                <CreditCard className="w-3.5 h-3.5" />
+                              </div>
+                              <div>
+                                <h4 className="text-xs sm:text-sm font-semibold text-white leading-snug">
+                                  {item.memberName}
+                                </h4>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-[10px] text-cyan-300 bg-cyan-500/15 px-2 py-0.5 rounded border border-cyan-500/30">
+                                    {item.category}
+                                  </span>
+                                  <span className="text-[10px] text-zinc-400 font-mono">{item.paymentDate}</span>
+                                </div>
                               </div>
                             </div>
+                            <div className="text-right">
+                              <span className="text-xs sm:text-sm font-mono font-bold text-emerald-400">
+                                LKR {item.amount.toLocaleString()}
+                              </span>
+                              <p className="text-[10px] text-zinc-500">{item.method}</p>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <span className="text-xs sm:text-sm font-mono font-bold text-emerald-400">
-                              LKR {item.amount.toLocaleString()}
-                            </span>
-                            <p className="text-[10px] text-zinc-500">{item.method}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
+                        ))
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
               </section>
 
               {/* Recent Member Messages Widget Row */}
-              <div className="bg-[#0e121c] border border-cyan-500/30 rounded-2xl p-5 shadow-lg shadow-cyan-950/20 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cyan-950/60 pb-3.5">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-                      <MessageSquare className="w-5 h-5" />
+              {currentUserRole !== "STAFF" && (
+                <div className="bg-[#0e121c] border border-cyan-500/30 rounded-2xl p-5 shadow-lg shadow-cyan-950/20 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cyan-950/60 pb-3.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                        <MessageSquare className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm sm:text-base font-bold text-white tracking-wide flex items-center gap-2">
+                          Recent Member Messages
+                          {recentMemberMessagesList.length > 0 && (
+                            <span className="px-2.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 text-[10px] font-mono font-bold animate-pulse">
+                              {recentMemberMessagesList.length} New
+                            </span>
+                          )}
+                        </h3>
+                        <p className="text-xs text-zinc-400 mt-0.5">
+                          Unread incoming chat conversations from registered members. Click any card to reply.
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-sm sm:text-base font-bold text-white tracking-wide flex items-center gap-2">
-                        Recent Member Messages
-                        {recentMemberMessagesList.length > 0 && (
-                          <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 text-[10px] font-mono">
-                            {recentMemberMessagesList.length} Latest
-                          </span>
-                        )}
-                      </h3>
-                      <p className="text-xs text-zinc-400 mt-0.5">
-                        Latest incoming chat conversations from registered members. Click any card to reply.
+
+                    <button
+                      onClick={() => handleTabChange("Member Chat")}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition-colors bg-cyan-500/10 px-3 py-1.5 rounded-xl border border-cyan-500/30 self-start sm:self-auto shrink-0 cursor-pointer"
+                    >
+                      Open Member Chat <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {recentMemberMessagesList.length === 0 ? (
+                    <div className="py-10 px-4 text-center bg-[#07090e] border border-zinc-800/80 rounded-xl space-y-2 flex flex-col items-center justify-center">
+                      <MessageCircle className="w-9 h-9 text-slate-500 opacity-60" />
+                      <h4 className="text-xs sm:text-sm font-bold text-slate-400">
+                        No new unread messages. You're all caught up! 🎉
+                      </h4>
+                      <p className="text-xs text-slate-400 max-w-sm mx-auto opacity-80">
+                        Incoming messages from registered members will appear here as soon as they arrive.
                       </p>
                     </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleTabChange("Member Chat")}
-                    className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition-colors bg-cyan-500/10 px-3 py-1.5 rounded-xl border border-cyan-500/30 self-start sm:self-auto shrink-0 cursor-pointer"
-                  >
-                    Open Member Chat <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {recentMemberMessagesList.length === 0 ? (
-                  <div className="py-8 px-4 text-center bg-[#07090e] border border-zinc-800/80 rounded-xl space-y-2">
-                    <MessageCircle className="w-8 h-8 text-cyan-400 mx-auto opacity-60" />
-                    <h4 className="text-xs font-bold text-white">No Recent Member Messages</h4>
-                    <p className="text-[11px] text-zinc-400 max-w-sm mx-auto">
-                      Incoming chat messages sent by members will display live in this feed.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {recentMemberMessagesList.map((item) => (
-                      <div
-                        key={item.id}
-                        onClick={() => {
-                          handleTabChange("Member Chat");
-                          setActiveChatMemberId(item.memberId);
-                        }}
-                        className="bg-[#07090e] border border-zinc-800 hover:border-cyan-500/50 hover:bg-[#0c121d] rounded-xl p-3.5 flex flex-col justify-between gap-2.5 transition-all cursor-pointer group shadow-md"
-                      >
-                        <div className="flex items-center gap-3">
-                          <img
-                            src={item.avatarUrl}
-                            alt={item.memberName}
-                            className="w-10 h-10 rounded-full object-cover border border-cyan-500/40 shrink-0 group-hover:scale-105 transition-transform"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src =
-                                "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80";
-                            }}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-1">
-                              <h4 className="text-xs sm:text-sm font-extrabold text-white group-hover:text-cyan-300 transition-colors truncate">
-                                {item.memberName}
-                              </h4>
-                              <span className="text-[10px] text-zinc-500 font-mono shrink-0">
-                                {item.timestamp}
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {recentMemberMessagesList.map((item) => (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            handleTabChange("Member Chat");
+                            setActiveChatMemberId(item.memberId);
+                          }}
+                          className="bg-[#07090e] border border-zinc-800 hover:border-cyan-500/50 hover:bg-[#0c121d] rounded-xl p-3.5 flex flex-col justify-between gap-2.5 transition-all cursor-pointer group shadow-md"
+                        >
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={item.avatarUrl}
+                              alt={item.memberName}
+                              className="w-10 h-10 rounded-full object-cover border border-cyan-500/40 shrink-0 group-hover:scale-105 transition-transform"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src =
+                                  "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80";
+                              }}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <h4 className="text-xs sm:text-sm font-extrabold text-white group-hover:text-cyan-300 transition-colors truncate">
+                                  {item.memberName}
+                                </h4>
+                                <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+                                  {item.timestamp}
+                                </span>
+                              </div>
+                              <span className="inline-block px-1.5 py-0.2 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 text-[9px] font-mono mt-0.5">
+                                {item.memberId}
                               </span>
                             </div>
-                            <span className="inline-block px-1.5 py-0.2 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 text-[9px] font-mono mt-0.5">
-                              {item.memberId}
-                            </span>
+                          </div>
+
+                          <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-lg p-2 text-xs text-zinc-300 line-clamp-2 italic leading-relaxed">
+                            &ldquo;{item.messageText}&rdquo;
+                          </div>
+
+                          <div className="flex items-center justify-end text-[11px] font-bold text-cyan-400 group-hover:translate-x-1 transition-transform pt-0.5">
+                            <span>Open Chat →</span>
                           </div>
                         </div>
-
-                        <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-lg p-2 text-xs text-zinc-300 line-clamp-2 italic leading-relaxed">
-                          &ldquo;{item.messageText}&rdquo;
-                        </div>
-
-                        <div className="flex items-center justify-end text-[11px] font-bold text-cyan-400 group-hover:translate-x-1 transition-transform pt-0.5">
-                          <span>Open Chat →</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Bottom Row (Bottom Left: Membership Distribution & New Enrollments | Bottom Right: Payment Defaulters) */}
               <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -5328,69 +5470,71 @@ export default function Home() {
                 </div>
 
                 {/* Bottom Right Section: Payment Defaulters List */}
-                <div className="lg:col-span-1 bg-[#1a0e12] border border-rose-500/30 rounded-2xl p-5 shadow-lg shadow-rose-950/20 flex flex-col justify-between">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-rose-400 shadow-[0_0_8px_#f43f5e]" />
-                      <h3 className="text-sm sm:text-base font-bold text-white tracking-wide">Payment Defaulters</h3>
-                    </div>
-                    <span className="text-[10px] font-mono font-bold text-rose-300 bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/40">
-                      {paymentRecords.filter((p) => p.status !== "Paid").length} Due
-                    </span>
-                  </div>
-
-                  <div className="divide-y divide-rose-950/50 space-y-2">
-                    {paymentRecords.filter((p) => p.status !== "Paid").length === 0 ? (
-                      /* ELEGANT EMPTY STATE FOR PAYMENT DEFAULTERS */
-                      <div className="py-12 px-4 text-center space-y-2">
-                        <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto">
-                          <CheckCircle2 className="w-5 h-5 opacity-80" />
-                        </div>
-                        <h4 className="text-xs font-bold text-white">No Payment Defaulters Found 🎉</h4>
-                        <p className="text-[11px] text-zinc-400">
-                          All member accounts are up-to-date with active paid memberships!
-                        </p>
+                {currentUserRole !== "STAFF" && (
+                  <div className="lg:col-span-1 bg-[#1a0e12] border border-rose-500/30 rounded-2xl p-5 shadow-lg shadow-rose-950/20 flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full bg-rose-400 shadow-[0_0_8px_#f43f5e]" />
+                        <h3 className="text-sm sm:text-base font-bold text-white tracking-wide">Payment Defaulters</h3>
                       </div>
-                    ) : (
-                      paymentRecords
-                        .filter((p) => p.status !== "Paid")
-                        .map((item) => (
-                          <div key={item.id} className="pt-2.5 first:pt-0 flex items-center justify-between">
-                            <div>
-                              <h4 className="text-xs sm:text-sm font-semibold text-white leading-snug">
-                                {item.memberName}
-                              </h4>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-[10px] text-rose-300 bg-rose-500/15 px-2 py-0.5 rounded border border-rose-500/30">
-                                  {item.category}
+                      <span className="text-[10px] font-mono font-bold text-rose-300 bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/40">
+                        {paymentRecords.filter((p) => p.status !== "Paid").length} Due
+                      </span>
+                    </div>
+
+                    <div className="divide-y divide-rose-950/50 space-y-2">
+                      {paymentRecords.filter((p) => p.status !== "Paid").length === 0 ? (
+                        /* ELEGANT EMPTY STATE FOR PAYMENT DEFAULTERS */
+                        <div className="py-12 px-4 text-center space-y-2">
+                          <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto">
+                            <CheckCircle2 className="w-5 h-5 opacity-80" />
+                          </div>
+                          <h4 className="text-xs font-bold text-white">No Payment Defaulters Found 🎉</h4>
+                          <p className="text-[11px] text-zinc-400">
+                            All member accounts are up-to-date with active paid memberships!
+                          </p>
+                        </div>
+                      ) : (
+                        paymentRecords
+                          .filter((p) => p.status !== "Paid")
+                          .map((item) => (
+                            <div key={item.id} className="pt-2.5 first:pt-0 flex items-center justify-between">
+                              <div>
+                                <h4 className="text-xs sm:text-sm font-semibold text-white leading-snug">
+                                  {item.memberName}
+                                </h4>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-[10px] text-rose-300 bg-rose-500/15 px-2 py-0.5 rounded border border-rose-500/30">
+                                    {item.category}
+                                  </span>
+                                  <span className="text-[10px] text-rose-400/80 font-mono font-semibold">
+                                    Due: {item.dueDate}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs sm:text-sm font-mono font-bold text-rose-400">
+                                  LKR {item.amount.toLocaleString()}
                                 </span>
-                                <span className="text-[10px] text-rose-400/80 font-mono font-semibold">
-                                  Due: {item.dueDate}
-                                </span>
+                                <button
+                                  onClick={() => {
+                                    setCustomReminderText(
+                                      `Hi ${item.memberName}, this is a friendly payment reminder from IGYM Balangoda regarding your ${item.category} overdue balance of LKR ${item.amount.toLocaleString()} (Due Date: ${item.dueDate}). Please settle at your earliest convenience!`
+                                    );
+                                    setIsPaymentReminderModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 hover:text-white text-[11px] font-bold flex items-center gap-1 transition-all shadow-[0_0_8px_rgba(244,63,94,0.2)]"
+                                >
+                                  <Send className="w-3 h-3 text-rose-400" />
+                                  Remind
+                                </button>
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs sm:text-sm font-mono font-bold text-rose-400">
-                                LKR {item.amount.toLocaleString()}
-                              </span>
-                              <button
-                                onClick={() => {
-                                  setCustomReminderText(
-                                    `Hi ${item.memberName}, this is a friendly payment reminder from IGYM Balangoda regarding your ${item.category} overdue balance of LKR ${item.amount.toLocaleString()} (Due Date: ${item.dueDate}). Please settle at your earliest convenience!`
-                                  );
-                                  setIsPaymentReminderModalOpen(true);
-                                }}
-                                className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 hover:text-white text-[11px] font-bold flex items-center gap-1 transition-all shadow-[0_0_8px_rgba(244,63,94,0.2)]"
-                              >
-                                <Send className="w-3 h-3 text-rose-400" />
-                                Remind
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                    )}
+                          ))
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
               </section>
             </div>
           )
@@ -5671,77 +5815,79 @@ export default function Home() {
           <div className="space-y-6">
             {/* Top View Toggle: Income vs Expenses & Actions */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#0d0f17] border border-zinc-800 p-2.5 rounded-2xl">
-              <div className="flex items-center gap-1.5 p-1 bg-[#141824] border border-zinc-800 rounded-xl">
-                <button
-                  onClick={() => setPaymentViewTab("INCOME")}
-                  className={`px-5 py-2 font-extrabold text-xs sm:text-sm rounded-lg transition-all flex items-center gap-2 ${
-                    paymentViewTab === "INCOME"
-                      ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-purple-500/25"
-                      : "text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  <Wallet className="w-4 h-4 text-purple-300" /> Income & Revenue (ආදායම්)
-                </button>
-                <button
-                  onClick={() => setPaymentViewTab("EXPENSES")}
-                  className={`px-5 py-2 font-extrabold text-xs sm:text-sm rounded-lg transition-all flex items-center gap-2 ${
-                    paymentViewTab === "EXPENSES"
-                      ? "bg-gradient-to-r from-rose-600 to-red-600 text-white shadow-md shadow-rose-500/25"
-                      : "text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  <TrendingDown className="w-4 h-4 text-rose-300" /> Expenses Tracking (වියදම්)
-                </button>
-              </div>
-
-              {paymentViewTab === "INCOME" && (
-                <div className="flex items-center gap-2 shrink-0">
+              {currentUserRole !== "STAFF" && (
+                <div className="flex items-center gap-1.5 p-1 bg-[#141824] border border-zinc-800 rounded-xl">
                   <button
-                    onClick={() => {
-                      const initialMem = members[0];
-                      const initialCat = initialMem?.tier && gymPackages.some((p) => p.name === initialMem.tier) ? initialMem.tier : "Men (Without Treadmills)";
-                      const calc = calculatePaymentAmount(initialCat, 1);
-                      setPaymentFormData({
-                        memberId: initialMem?.id || "",
-                        externalPayerName: "",
-                        category: initialCat,
-                        durationMonths: 1,
-                        amount: calc.finalAmount,
-                        paidAmount: calc.finalAmount,
-                        method: "Cash",
-                        sendReceiptAlert: true,
-                        itemDescription: "",
-                        gymRevenuePercentage: 20,
-                      });
-                      setMemberComboboxQuery(initialMem ? `${initialMem.name} (${initialMem.id})` : "");
-                      setIsMemberComboboxOpen(false);
-                      setIsRecordPaymentModalOpen(true);
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-400 hover:to-pink-500 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-purple-500/25 transition-all whitespace-nowrap cursor-pointer shrink-0"
+                    onClick={() => setPaymentViewTab("INCOME")}
+                    className={`px-5 py-2 font-extrabold text-xs sm:text-sm rounded-lg transition-all flex items-center gap-2 ${
+                      paymentViewTab === "INCOME"
+                        ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-purple-500/25"
+                        : "text-zinc-400 hover:text-white"
+                    }`}
                   >
-                    <Plus className="w-4 h-4 stroke-[3]" /> Record Fee Payment
+                    <Wallet className="w-4 h-4 text-purple-300" /> Income & Revenue
                   </button>
-
-                  {paymentRecords.length > 0 && (
-                    <button
-                      onClick={handleClearAllPayments}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-500/40 text-red-400 font-bold text-xs transition-all whitespace-nowrap cursor-pointer shrink-0"
-                      title="Clear all payment records from database & system"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Clear All Logs
-                    </button>
-                  )}
+                  <button
+                    onClick={() => setPaymentViewTab("EXPENSES")}
+                    className={`px-5 py-2 font-extrabold text-xs sm:text-sm rounded-lg transition-all flex items-center gap-2 ${
+                      paymentViewTab === "EXPENSES"
+                        ? "bg-gradient-to-r from-rose-600 to-red-600 text-white shadow-md shadow-rose-500/25"
+                        : "text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    <TrendingDown className="w-4 h-4 text-rose-300" /> Expenses Tracking
+                  </button>
                 </div>
               )}
 
-              {paymentViewTab === "EXPENSES" && (
+              <div className="flex items-center gap-2 shrink-0">
                 <button
-                  onClick={() => setIsRecordExpenseModalOpen(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-rose-950/40 transition-all shrink-0 cursor-pointer"
+                  onClick={() => {
+                    const initialMem = members[0];
+                    const initialCat = initialMem?.tier && gymPackages.some((p) => p.name === initialMem.tier) ? initialMem.tier : "Men (Without Treadmills)";
+                    const calc = calculatePaymentAmount(initialCat, 1);
+                    setPaymentFormData({
+                      memberId: initialMem?.id || "",
+                      externalPayerName: "",
+                      category: initialCat,
+                      durationMonths: 1,
+                      amount: calc.finalAmount,
+                      paidAmount: calc.finalAmount,
+                      paymentDate: new Date().toISOString().split("T")[0],
+                      includeAdmissionFee: false,
+                      method: "Cash",
+                      sendReceiptAlert: true,
+                      itemDescription: "",
+                      gymRevenuePercentage: 20,
+                    });
+                    setMemberComboboxQuery(initialMem ? `${initialMem.name} (${initialMem.id})` : "");
+                    setIsMemberComboboxOpen(false);
+                    setIsRecordPaymentModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-400 hover:to-pink-500 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-purple-500/25 transition-all whitespace-nowrap cursor-pointer shrink-0"
                 >
-                  <Plus className="w-4 h-4 stroke-[3]" /> + Record Expense (නව වියදමක්)
+                  <Plus className="w-4 h-4 stroke-[3]" /> Record Fee Payment
                 </button>
-              )}
+
+                {currentUserRole !== "STAFF" && paymentViewTab === "INCOME" && paymentRecords.length > 0 && (
+                  <button
+                    onClick={handleClearAllPayments}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-500/40 text-red-400 font-bold text-xs transition-all whitespace-nowrap cursor-pointer shrink-0"
+                    title="Clear all payment records from database & system"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Clear All Logs
+                  </button>
+                )}
+
+                {currentUserRole !== "STAFF" && paymentViewTab === "EXPENSES" && (
+                  <button
+                    onClick={() => setIsRecordExpenseModalOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-rose-950/40 transition-all shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4 stroke-[3]" /> + Record Expense
+                  </button>
+                )}
+              </div>
             </div>
 
             {paymentViewTab === "INCOME" ? (
@@ -5759,472 +5905,494 @@ export default function Home() {
                   </div>
 
                   {/* Category Filters */}
-                  <div className="flex items-center gap-1 p-1 bg-[#0a0910] border border-zinc-800 rounded-xl text-xs overflow-x-auto max-w-full whitespace-nowrap scrollbar-none shrink-0">
-                    {(["All", "Monthly Fee", "Admission Fee", "PT Fee", "Supplements & Merchandise"] as const).map((cat) => (
-                      <button
-                        key={cat}
-                        onClick={() => setPaymentCategoryFilter(cat)}
-                        className={`px-3 py-1 font-semibold rounded-lg transition-all shrink-0 text-xs ${
-                          paymentCategoryFilter === cat
-                            ? "bg-purple-500 text-white shadow-md font-bold"
-                            : "text-zinc-400 hover:text-white"
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
+                  {currentUserRole !== "STAFF" && (
+                    <div className="flex items-center gap-1.5 p-1 bg-[#0a0910] border border-zinc-800 rounded-xl text-xs overflow-x-auto max-w-full whitespace-nowrap scrollbar-hide shrink-0">
+                      {(["All", "Men", "Ladies", "Student", "Couple", "Admission", "Supplements"] as const).map((cat) => (
+                        <button
+                          key={cat}
+                          onClick={() => setPaymentCategoryFilter(cat)}
+                          className={`px-3.5 py-1.5 font-bold rounded-lg transition-all shrink-0 text-xs ${
+                            paymentCategoryFilter === cat
+                              ? "bg-purple-500 text-white shadow-md shadow-purple-500/30 font-bold"
+                              : "text-zinc-400 hover:text-white"
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Payments Analytics Stat Cards (4 Cards) */}
-                <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Card 1: Total Gym Net Revenue This Month */}
-                  <div
-                    onClick={() => setIsRevenueModalOpen(true)}
-                    className="bg-[#101912] border border-lime-500/40 hover:border-lime-400 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-lime-950/20 cursor-pointer group transition-all transform hover:-translate-y-0.5"
-                    title="Click to view detailed revenue breakdown & export report"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="p-2.5 rounded-xl bg-lime-950/80 border border-lime-500/40 text-lime-400 group-hover:scale-110 transition-transform">
-                        <Wallet className="w-4 h-4" />
-                      </div>
-                      <span className="text-[11px] font-bold text-lime-400 font-mono">● THIS MONTH</span>
-                    </div>
-                    <div className="mt-4">
-                      <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight font-mono group-hover:text-lime-300 transition-colors">
-                        LKR {paymentRecords.filter((p) => p.status === "Paid").reduce((sum, p) => sum + (Number(p.gymRevenueAmount !== undefined ? p.gymRevenueAmount : p.amount) || 0), 0).toLocaleString()}
-                      </div>
-                      <div className="text-xs text-lime-400/80 font-semibold uppercase tracking-wider mt-1">Gym Net Revenue (Post PT Split)</div>
-                    </div>
-                  </div>
-
-                  {/* Card 2: Gym Packages & Tiers Manager */}
-                  <div
-                    onClick={() => setIsPackagePricingModalOpen(true)}
-                    className="bg-[#0f141f] border border-cyan-500/40 hover:border-cyan-400 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-cyan-950/20 cursor-pointer group transition-all transform hover:-translate-y-0.5"
-                    title="Click to manage & edit gym packages and prices"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="p-2.5 rounded-xl bg-cyan-950/80 border border-cyan-500/40 text-cyan-400 group-hover:scale-110 transition-transform">
-                        <TrendingUp className="w-4 h-4" />
-                      </div>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setIsPackagePricingModalOpen(true); }}
-                        className="text-xs font-extrabold text-cyan-300 bg-cyan-500/20 hover:bg-cyan-500/30 px-2.5 py-1 rounded-lg border border-cyan-400/40 flex items-center gap-1.5 transition-all"
-                      >
-                        <Settings2 className="w-3.5 h-3.5" /> Manage ({gymPackages.length})
-                      </button>
-                    </div>
-                    <div className="mt-3 space-y-1 text-xs">
-                      {gymPackages.slice(0, 3).map((pkg, idx) => (
-                        <div key={pkg.id} className="flex justify-between text-zinc-300">
-                          <span className="truncate pr-2">{pkg.name}:</span>
-                          <span className={`font-mono font-bold ${idx === 0 ? "text-cyan-300" : idx === 1 ? "text-lime-300" : "text-amber-300"}`}>
-                            LKR {pkg.price.toLocaleString()}
-                          </span>
+                {currentUserRole !== "STAFF" && (
+                  <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Card 1: Total Gym Net Revenue This Month */}
+                    <div
+                      onClick={() => setIsRevenueModalOpen(true)}
+                      className="bg-[#101912] border border-lime-500/40 hover:border-lime-400 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-lime-950/20 cursor-pointer group transition-all transform hover:-translate-y-0.5"
+                      title="Click to view detailed revenue breakdown & export report"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="p-2.5 rounded-xl bg-lime-950/80 border border-lime-500/40 text-lime-400 group-hover:scale-110 transition-transform">
+                          <Wallet className="w-4 h-4" />
                         </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Card 3: Overdue & Due Soon Pending */}
-                  {(() => {
-                    const pendingCountList = members.filter((m) => {
-                      const plan = (m.tier || "").toString().trim();
-                      const hasPlan = plan.length > 0 && plan !== "N/A" && plan.toLowerCase() !== "null";
-                      if (!hasPlan) return false;
-
-                      const expVal = m.expiry_date || m.expiryDate;
-                      if (!expVal) return false;
-                      const expDate = new Date(expVal);
-                      return !isNaN(expDate.getTime()) && expDate < new Date();
-                    });
-
-                    const totalPendingAmt = pendingCountList.reduce((sum, m) => {
-                      const plan = (m.tier || "").toString().trim();
-                      const hasPlan = plan.length > 0 && plan !== "N/A" && plan.toLowerCase() !== "null";
-                      if (!hasPlan) return sum;
-
-                      const pkg = gymPackages.find((p) => (p.package_name || p.name) === m.tier || p.name === m.tier);
-                      const price = pkg ? Number(pkg.price) || 0 : 0;
-                      return sum + price;
-                    }, 0);
-
-                    return (
-                      <div
-                        onClick={() => setIsPendingPaymentsModalOpen(true)}
-                        className="bg-[#1c0f14] border border-pink-500/40 hover:border-pink-400 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-pink-950/20 cursor-pointer group transition-all transform hover:-translate-y-0.5"
-                        title="Click to view list of members with pending or overdue payments"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="p-2.5 rounded-xl bg-pink-950/80 border border-pink-500/40 text-pink-400 group-hover:scale-110 transition-transform">
-                            <AlertTriangle className="w-4 h-4" />
-                          </div>
-                          <span className="text-xs font-bold text-pink-400 bg-pink-500/10 px-2 py-0.5 rounded border border-pink-500/30">Attention Due</span>
+                        <span className="text-[11px] font-bold text-lime-400 font-mono">● THIS MONTH</span>
+                      </div>
+                      <div className="mt-4">
+                        <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight font-mono group-hover:text-lime-300 transition-colors">
+                          LKR {paymentRecords.filter((p) => p.status === "Paid").reduce((sum, p) => sum + (Number(p.gymRevenueAmount !== undefined ? p.gymRevenueAmount : p.amount) || 0), 0).toLocaleString()}
                         </div>
-                        <div className="mt-4">
-                          <div className="text-2xl sm:text-3xl font-extrabold text-pink-300 tracking-tight font-mono group-hover:text-pink-200 transition-colors">
-                            LKR {totalPendingAmt.toLocaleString()}
+                        <div className="text-xs text-lime-400/80 font-semibold uppercase tracking-wider mt-1">Gym Net Revenue (Post PT Split)</div>
+                      </div>
+                    </div>
+
+                    {/* Card 2: Gym Packages & Tiers Manager */}
+                    <div
+                      onClick={() => setIsPackagePricingModalOpen(true)}
+                      className="bg-[#0f141f] border border-cyan-500/40 hover:border-cyan-400 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-cyan-950/20 cursor-pointer group transition-all transform hover:-translate-y-0.5"
+                      title="Click to manage & edit gym packages and prices"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="p-2.5 rounded-xl bg-cyan-950/80 border border-cyan-500/40 text-cyan-400 group-hover:scale-110 transition-transform">
+                          <TrendingUp className="w-4 h-4" />
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setIsPackagePricingModalOpen(true); }}
+                          className="text-xs font-extrabold text-cyan-300 bg-cyan-500/20 hover:bg-cyan-500/30 px-2.5 py-1 rounded-lg border border-cyan-400/40 flex items-center gap-1.5 transition-all"
+                        >
+                          <Settings2 className="w-3.5 h-3.5" /> Manage ({gymPackages.length})
+                        </button>
+                      </div>
+                      <div className="mt-3 space-y-1 text-xs">
+                        {gymPackages.slice(0, 3).map((pkg, idx) => (
+                          <div key={pkg.id} className="flex justify-between text-zinc-300">
+                            <span className="truncate pr-2">{pkg.name}:</span>
+                            <span className={`font-mono font-bold ${idx === 0 ? "text-cyan-300" : idx === 1 ? "text-lime-300" : "text-amber-300"}`}>
+                              LKR {pkg.price.toLocaleString()}
+                            </span>
                           </div>
-                          <div className="text-xs text-pink-400/80 font-semibold uppercase tracking-wider mt-1">
-                            {pendingCountList.length} Pending Overdue
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Card 3: Overdue & Due Soon Pending */}
+                    {(() => {
+                      const pendingCountList = members.filter((m) => {
+                        const plan = (m.tier || "").toString().trim();
+                        const hasPlan = plan.length > 0 && plan !== "N/A" && plan.toLowerCase() !== "null";
+                        if (!hasPlan) return false;
+
+                        const expVal = m.expiry_date || m.expiryDate;
+                        if (!expVal) return false;
+                        const expDate = new Date(expVal);
+                        return !isNaN(expDate.getTime()) && expDate < new Date();
+                      });
+
+                      const totalPendingAmt = pendingCountList.reduce((sum, m) => {
+                        const plan = (m.tier || "").toString().trim();
+                        const hasPlan = plan.length > 0 && plan !== "N/A" && plan.toLowerCase() !== "null";
+                        if (!hasPlan) return sum;
+
+                        const pkg = gymPackages.find((p) => (p.package_name || p.name) === m.tier || p.name === m.tier);
+                        const price = pkg ? Number(pkg.price) || 0 : 0;
+                        return sum + price;
+                      }, 0);
+
+                      return (
+                        <div
+                          onClick={() => setIsPendingPaymentsModalOpen(true)}
+                          className="bg-[#1c0f14] border border-pink-500/40 hover:border-pink-400 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-pink-950/20 cursor-pointer group transition-all transform hover:-translate-y-0.5"
+                          title="Click to view list of members with pending or overdue payments"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="p-2.5 rounded-xl bg-pink-950/80 border border-pink-500/40 text-pink-400 group-hover:scale-110 transition-transform">
+                              <AlertTriangle className="w-4 h-4" />
+                            </div>
+                            <span className="text-xs font-bold text-pink-400 bg-pink-500/10 px-2 py-0.5 rounded border border-pink-500/30">Attention Due</span>
+                          </div>
+                          <div className="mt-4">
+                            <div className="text-2xl sm:text-3xl font-extrabold text-pink-300 tracking-tight font-mono group-hover:text-pink-200 transition-colors">
+                              LKR {totalPendingAmt.toLocaleString()}
+                            </div>
+                            <div className="text-xs text-pink-400/80 font-semibold uppercase tracking-wider mt-1">
+                              {pendingCountList.length} Pending Overdue
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })()}
+                      );
+                    })()}
 
-                  {/* Card 4: Automated Reminders Sent */}
-                  <div className="bg-[#18150d] border border-amber-500/30 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-amber-950/20">
-                    <div className="flex items-center justify-between">
-                      <div className="p-2.5 rounded-xl bg-amber-950/80 border border-amber-500/40 text-amber-400">
-                        <MessageSquare className="w-4 h-4" />
+                    {/* Card 4: Automated Reminders Sent */}
+                    <div className="bg-[#18150d] border border-amber-500/30 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-amber-950/20">
+                      <div className="flex items-center justify-between">
+                        <div className="p-2.5 rounded-xl bg-amber-950/80 border border-amber-500/40 text-amber-400">
+                          <MessageSquare className="w-4 h-4" />
+                        </div>
+                        <span className="text-xs font-bold text-purple-300 bg-purple-500/15 px-2.5 py-0.5 rounded-full border border-purple-500/30">In-App Sync</span>
                       </div>
-                      <span className="text-xs font-bold text-purple-300 bg-purple-500/15 px-2.5 py-0.5 rounded-full border border-purple-500/30">In-App Sync</span>
+                      <div className="mt-4">
+                        <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight font-mono">
+                          {paymentRecords.filter((p) => p.reminderSent).length} Receipts
+                        </div>
+                        <div className="text-xs text-amber-400/80 font-semibold uppercase tracking-wider mt-1">Routed via Member App Chat</div>
+                      </div>
                     </div>
-                    <div className="mt-4">
-                      <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight font-mono">
-                        {paymentRecords.filter((p) => p.reminderSent).length} Receipts
-                      </div>
-                      <div className="text-xs text-amber-400/80 font-semibold uppercase tracking-wider mt-1">Routed via Member App Chat</div>
-                    </div>
-                  </div>
-                </section>
-
-
+                  </section>
+                )}
 
                 {/* Payment Transactions Table */}
-                <div className="bg-[#0e1019] border border-zinc-800 rounded-2xl p-5 shadow-xl space-y-4">
-                  
-                  {/* Date Range & Dual Export (CSV & PDF) Bar */}
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 bg-[#13111f] border border-purple-500/20 rounded-xl text-xs">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="font-bold text-purple-300 flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-purple-400" /> Filter Date Range:
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <label className="text-zinc-400 font-medium">From:</label>
-                        <input
-                          type="date"
-                          value={paymentStartDate}
-                          onClick={(e) => e.currentTarget.showPicker?.()}
-                          onChange={(e) => setPaymentStartDate(e.target.value)}
-                          className="bg-[#0b0a12] border border-purple-500/30 hover:border-purple-400 rounded-lg px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-purple-500 cursor-pointer transition-all [color-scheme:dark]"
-                        />
+                {currentUserRole !== "STAFF" && (
+                  <div className="bg-[#0e1019] border border-zinc-800 rounded-2xl p-5 shadow-xl space-y-4">
+                    {/* Date Range & Dual Export (CSV & PDF) Bar */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 bg-[#13111f] border border-purple-500/20 rounded-xl text-xs">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="font-bold text-purple-300 flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-purple-400" /> Filter Date Range:
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <label className="text-zinc-400 font-medium">From:</label>
+                          <input
+                            type="date"
+                            value={paymentStartDate}
+                            onClick={(e) => e.currentTarget.showPicker?.()}
+                            onChange={(e) => setPaymentStartDate(e.target.value)}
+                            className="bg-[#0b0a12] border border-purple-500/30 hover:border-purple-400 rounded-lg px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-purple-500 cursor-pointer transition-all [color-scheme:dark]"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-zinc-400 font-medium">To:</label>
+                          <input
+                            type="date"
+                            value={paymentEndDate}
+                            onClick={(e) => e.currentTarget.showPicker?.()}
+                            onChange={(e) => setPaymentEndDate(e.target.value)}
+                            className="bg-[#0b0a12] border border-purple-500/30 hover:border-purple-400 rounded-lg px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-purple-500 cursor-pointer transition-all [color-scheme:dark]"
+                          />
+                        </div>
+                        {(paymentStartDate || paymentEndDate) && (
+                          <button
+                            onClick={() => {
+                              setPaymentStartDate("");
+                              setPaymentEndDate("");
+                            }}
+                            className="text-[11px] text-zinc-400 hover:text-white underline font-medium"
+                          >
+                            Clear Dates
+                          </button>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <label className="text-zinc-400 font-medium">To:</label>
-                        <input
-                          type="date"
-                          value={paymentEndDate}
-                          onClick={(e) => e.currentTarget.showPicker?.()}
-                          onChange={(e) => setPaymentEndDate(e.target.value)}
-                          className="bg-[#0b0a12] border border-purple-500/30 hover:border-purple-400 rounded-lg px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-purple-500 cursor-pointer transition-all [color-scheme:dark]"
-                        />
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={handleExportCSV}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-300 border border-slate-700 font-bold text-xs transition-all flex items-center gap-1.5"
+                          title="Download currently filtered records as CSV spreadsheet"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-teal-400" /> Export to CSV
+                        </button>
+                        <button
+                          onClick={handleExportPDF}
+                          className="px-3 py-1.5 rounded-lg bg-purple-950/60 hover:bg-purple-900/80 text-purple-300 border border-purple-500/40 font-bold text-xs transition-all flex items-center gap-1.5"
+                          title="Generate professional PDF income report"
+                        >
+                          <Download className="w-3.5 h-3.5 text-purple-400" /> Export to PDF
+                        </button>
                       </div>
-                      {(paymentStartDate || paymentEndDate) && (
-                        <button
-                          onClick={() => {
-                            setPaymentStartDate("");
-                            setPaymentEndDate("");
-                          }}
-                          className="text-[11px] text-zinc-400 hover:text-white underline font-medium"
-                        >
-                          Clear Dates
-                        </button>
-                      )}
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={handleExportCSV}
-                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-300 border border-slate-700 font-bold text-xs transition-all flex items-center gap-1.5"
-                        title="Download currently filtered records as CSV spreadsheet"
-                      >
-                        <FileText className="w-3.5 h-3.5 text-teal-400" /> Export to CSV
-                      </button>
-                      <button
-                        onClick={handleExportPDF}
-                        className="px-3 py-1.5 rounded-lg bg-purple-950/60 hover:bg-purple-900/80 text-purple-300 border border-purple-500/40 font-bold text-xs transition-all flex items-center gap-1.5"
-                        title="Generate professional PDF income report"
-                      >
-                        <Download className="w-3.5 h-3.5 text-purple-400" /> Export to PDF
-                      </button>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-zinc-800/80">
+                      <div>
+                        <h3 className="text-base font-bold text-white tracking-wide flex items-center gap-2">
+                          <CreditCard className="w-4 h-4 text-purple-400" /> Transaction Records & Expiry Status
+                        </h3>
+                        <p className="text-xs text-zinc-400 mt-0.5">Filter, search, or verify member fee payments and in-app receipt dispatches.</p>
+                      </div>
+
+                      {/* Prominent Search Transactions Input */}
+                      <div className="relative w-full sm:w-80">
+                        <Search className="w-4 h-4 text-purple-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Search by Member Name, ID (MEM-...), or Invoice..."
+                          value={paymentSearchQuery}
+                          onChange={(e) => setPaymentSearchQuery(e.target.value)}
+                          className="w-full bg-[#151322] border border-purple-500/30 rounded-xl pl-10 pr-9 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-purple-400 transition-all shadow-inner"
+                        />
+                        {paymentSearchQuery && (
+                          <button
+                            onClick={() => setPaymentSearchQuery("")}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-zinc-800/80">
-                    <div>
-                      <h3 className="text-base font-bold text-white tracking-wide flex items-center gap-2">
-                        <CreditCard className="w-4 h-4 text-purple-400" /> Transaction Records & Expiry Status
-                      </h3>
-                      <p className="text-xs text-zinc-400 mt-0.5">Filter, search, or verify member fee payments and in-app receipt dispatches.</p>
-                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[750px] text-left text-xs sm:text-sm">
+                        <thead>
+                          <tr className="text-[11px] font-bold text-purple-400/90 uppercase tracking-wider border-b border-zinc-800">
+                            <th className="pb-3.5 pl-2 font-semibold">INVOICE & MEMBER</th>
+                            <th className="pb-3.5 font-semibold">FEE CATEGORY</th>
+                            <th className="pb-3.5 font-semibold">AMOUNT</th>
+                            <th className="pb-3.5 font-semibold">PAYMENT / DUE DATE</th>
+                            <th className="pb-3.5 font-semibold">METHOD</th>
+                            <th className="pb-3.5 font-semibold">STATUS</th>
+                            <th className="pb-3.5 font-semibold">DIGITAL RECEIPT</th>
+                            <th className="pb-3.5 pr-2 text-right font-semibold">ACTIONS</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-800/60">
+                          {(() => {
+                            const filtered = paymentRecords.filter((p) => {
+                              const matchesCategory = (() => {
+                                if (paymentCategoryFilter === "All") return true;
+                                const catLower = (p.category || "").toLowerCase();
+                                const targetLower = paymentCategoryFilter.toLowerCase();
+                                if (targetLower === "men") return catLower.includes("men") && !catLower.includes("women") && !catLower.includes("ladies");
+                                if (targetLower === "ladies") return catLower.includes("ladies") || catLower.includes("women");
+                                if (targetLower === "student") return catLower.includes("student");
+                                if (targetLower === "couple") return catLower.includes("couple") || catLower.includes("family");
+                                if (targetLower === "admission") return catLower.includes("admission");
+                                if (targetLower === "supplements") return catLower.includes("supplement") || catLower.includes("merchandise");
+                                return catLower.includes(targetLower);
+                              })();
+                              const q = paymentSearchQuery.trim().toLowerCase();
+                              const matchesSearch =
+                                !q ||
+                                p.memberName.toLowerCase().includes(q) ||
+                                (p.memberId && p.memberId.toLowerCase().includes(q)) ||
+                                (p.externalPayerName && p.externalPayerName.toLowerCase().includes(q)) ||
+                                p.invoiceNo.toLowerCase().includes(q) ||
+                                p.phone.toLowerCase().includes(q) ||
+                                (p.itemDescription && p.itemDescription.toLowerCase().includes(q));
 
-                    {/* Prominent Search Transactions Input */}
-                    <div className="relative w-full sm:w-80">
-                      <Search className="w-4 h-4 text-purple-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        placeholder="Search by Member Name, ID (MEM-...), or Invoice..."
-                        value={paymentSearchQuery}
-                        onChange={(e) => setPaymentSearchQuery(e.target.value)}
-                        className="w-full bg-[#151322] border border-purple-500/30 rounded-xl pl-10 pr-9 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-purple-400 transition-all shadow-inner"
-                      />
-                      {paymentSearchQuery && (
-                        <button
-                          onClick={() => setPaymentSearchQuery("")}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                              const matchesStartDate = !paymentStartDate || p.paymentDate >= paymentStartDate;
+                              const matchesEndDate = !paymentEndDate || p.paymentDate <= paymentEndDate;
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[750px] text-left text-xs sm:text-sm">
-                      <thead>
-                        <tr className="text-[11px] font-bold text-purple-400/90 uppercase tracking-wider border-b border-zinc-800">
-                          <th className="pb-3.5 pl-2 font-semibold">INVOICE & MEMBER</th>
-                          <th className="pb-3.5 font-semibold">FEE CATEGORY</th>
-                          <th className="pb-3.5 font-semibold">AMOUNT</th>
-                          <th className="pb-3.5 font-semibold">PAYMENT / DUE DATE</th>
-                          <th className="pb-3.5 font-semibold">METHOD</th>
-                          <th className="pb-3.5 font-semibold">STATUS</th>
-                          <th className="pb-3.5 font-semibold">DIGITAL RECEIPT</th>
-                          <th className="pb-3.5 pr-2 text-right font-semibold">ACTIONS</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-800/60">
-                        {(() => {
-                          const filtered = paymentRecords.filter((p) => {
-                            const matchesCategory = paymentCategoryFilter === "All" || p.category === paymentCategoryFilter;
-                            const q = paymentSearchQuery.trim().toLowerCase();
-                            const matchesSearch =
-                              !q ||
-                              p.memberName.toLowerCase().includes(q) ||
-                              (p.memberId && p.memberId.toLowerCase().includes(q)) ||
-                              (p.externalPayerName && p.externalPayerName.toLowerCase().includes(q)) ||
-                              p.invoiceNo.toLowerCase().includes(q) ||
-                              p.phone.toLowerCase().includes(q) ||
-                              (p.itemDescription && p.itemDescription.toLowerCase().includes(q));
+                              return matchesCategory && matchesSearch && matchesStartDate && matchesEndDate;
+                            });
 
-                            const matchesStartDate = !paymentStartDate || p.paymentDate >= paymentStartDate;
-                            const matchesEndDate = !paymentEndDate || p.paymentDate <= paymentEndDate;
+                            if (isOverviewLoading && paymentRecords.length === 0) {
+                              return Array.from({ length: 6 }).map((_, idx) => (
+                                <tr key={idx} className="animate-pulse border-b border-zinc-800/40">
+                                  <td className="py-4 pl-2">
+                                    <div className="space-y-1.5">
+                                      <div className="h-4 w-24 bg-zinc-800/80 rounded font-mono" />
+                                      <div className="h-4 w-36 bg-zinc-800/90 rounded" />
+                                      <div className="h-3 w-28 bg-zinc-800/50 rounded font-mono" />
+                                    </div>
+                                  </td>
+                                  <td className="py-4">
+                                    <div className="h-6 w-28 bg-zinc-800/80 rounded-lg" />
+                                  </td>
+                                  <td className="py-4">
+                                    <div className="h-5 w-24 bg-zinc-800/80 rounded font-mono" />
+                                  </td>
+                                  <td className="py-4">
+                                    <div className="h-4 w-20 bg-zinc-800/80 rounded font-mono" />
+                                  </td>
+                                  <td className="py-4">
+                                    <div className="h-4 w-16 bg-zinc-800/80 rounded" />
+                                  </td>
+                                  <td className="py-4">
+                                    <div className="h-6 w-20 bg-zinc-800/80 rounded-full" />
+                                  </td>
+                                  <td className="py-4 pr-2 text-right">
+                                    <div className="flex items-center justify-end gap-2">
+                                      <div className="w-8 h-8 rounded-xl bg-zinc-800/80" />
+                                      <div className="w-8 h-8 rounded-xl bg-zinc-800/80" />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ));
+                            }
 
-                            return matchesCategory && matchesSearch && matchesStartDate && matchesEndDate;
-                          });
+                            if (filtered.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={8} className="py-12 text-center text-zinc-500 text-xs font-mono">
+                                    No transaction records found matching "{paymentSearchQuery || paymentCategoryFilter}".
+                                  </td>
+                                </tr>
+                              );
+                            }
 
-                          if (isOverviewLoading && paymentRecords.length === 0) {
-                            return Array.from({ length: 6 }).map((_, idx) => (
-                              <tr key={idx} className="animate-pulse border-b border-zinc-800/40">
-                                <td className="py-4 pl-2">
-                                  <div className="space-y-1.5">
-                                    <div className="h-4 w-24 bg-zinc-800/80 rounded font-mono" />
-                                    <div className="h-4 w-36 bg-zinc-800/90 rounded" />
-                                    <div className="h-3 w-28 bg-zinc-800/50 rounded font-mono" />
-                                  </div>
-                                </td>
-                                <td className="py-4">
-                                  <div className="h-6 w-28 bg-zinc-800/80 rounded-lg" />
-                                </td>
-                                <td className="py-4">
-                                  <div className="h-5 w-24 bg-zinc-800/80 rounded font-mono" />
-                                </td>
-                                <td className="py-4">
-                                  <div className="h-4 w-20 bg-zinc-800/80 rounded font-mono" />
-                                </td>
-                                <td className="py-4">
-                                  <div className="h-4 w-16 bg-zinc-800/80 rounded" />
-                                </td>
-                                <td className="py-4">
-                                  <div className="h-6 w-20 bg-zinc-800/80 rounded-full" />
-                                </td>
-                                <td className="py-4 pr-2 text-right">
-                                  <div className="flex items-center justify-end gap-2">
-                                    <div className="w-8 h-8 rounded-xl bg-zinc-800/80" />
-                                    <div className="w-8 h-8 rounded-xl bg-zinc-800/80" />
-                                  </div>
-                                </td>
-                              </tr>
-                            ));
-                          }
+                            return filtered.map((pay) => {
+                              const isWalkIn = !pay.memberId || pay.memberId === "WALK_IN";
+                              const displayName = isWalkIn ? (pay.externalPayerName || pay.memberName || "Walk-in Guest / External Income") : pay.memberName;
 
-                          if (filtered.length === 0) {
-                            return (
-                              <tr>
-                                <td colSpan={8} className="py-12 text-center text-zinc-500 text-xs font-mono">
-                                  No transaction records found matching "{paymentSearchQuery || paymentCategoryFilter}".
-                                </td>
-                              </tr>
-                            );
-                          }
-
-                          return filtered.map((pay) => {
-                            const isWalkIn = !pay.memberId || pay.memberId === "WALK_IN";
-                            const displayName = isWalkIn ? (pay.externalPayerName || pay.memberName || "Walk-in Guest / External Income") : pay.memberName;
-
-                            return (
-                              <tr key={pay.id} className="hover:bg-zinc-800/40 transition-colors">
-                                <td className="py-4 pl-2">
-                                  <div>
-                                    <span className="font-mono text-xs text-purple-300 font-bold">{pay.invoiceNo}</span>
-                                    <h4 className="font-bold text-white text-sm mt-0.5 flex items-center gap-1.5">
-                                      {displayName}
-                                      {isWalkIn && (
-                                        <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold">
-                                          Walk-in 🛍️
-                                        </span>
+                              return (
+                                <tr key={pay.id} className="hover:bg-zinc-800/40 transition-colors">
+                                  <td className="py-4 pl-2">
+                                    <div>
+                                      <span className="font-mono text-xs text-purple-300 font-bold">{pay.invoiceNo}</span>
+                                      <h4 className="font-bold text-white text-sm mt-0.5 flex items-center gap-1.5">
+                                        {displayName}
+                                        {isWalkIn && (
+                                          <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold">
+                                            Walk-in 🛍️
+                                          </span>
+                                        )}
+                                      </h4>
+                                      <span className="text-[10px] text-zinc-400 font-mono">
+                                        {!isWalkIn ? `${pay.memberId} • ${pay.phone}` : `External Income • ${pay.phone || "N/A"}`}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="py-4">
+                                    <div>
+                                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-extrabold border ${
+                                        pay.category === "Monthly Fee" ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
+                                        : pay.category === "PT Fee" || pay.category.toLowerCase().includes("pt") ? "bg-lime-500/15 text-lime-300 border-lime-500/30"
+                                        : pay.category === "Admission Fee" ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                        : pay.category === "Supplements & Merchandise" ? "bg-pink-500/15 text-pink-300 border-pink-500/30"
+                                        : "bg-purple-500/15 text-purple-300 border-purple-500/30"
+                                      }`}>
+                                        {pay.category}
+                                      </span>
+                                      {pay.itemDescription && (
+                                        <p className="text-[11px] font-semibold text-pink-300 mt-1 font-mono flex items-center gap-1">
+                                          📦 {pay.itemDescription}
+                                        </p>
                                       )}
-                                    </h4>
-                                    <span className="text-[10px] text-zinc-400 font-mono">
-                                      {!isWalkIn ? `${pay.memberId} • ${pay.phone}` : `External Income • ${pay.phone || "N/A"}`}
-                                    </span>
-                                  </div>
-                                </td>
-                              <td className="py-4">
-                                <div>
-                                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-extrabold border ${
-                                    pay.category === "Monthly Fee" ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
-                                    : pay.category === "PT Fee" || pay.category.toLowerCase().includes("pt") ? "bg-lime-500/15 text-lime-300 border-lime-500/30"
-                                    : pay.category === "Admission Fee" ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
-                                    : pay.category === "Supplements & Merchandise" ? "bg-pink-500/15 text-pink-300 border-pink-500/30"
-                                    : "bg-purple-500/15 text-purple-300 border-purple-500/30"
-                                  }`}>
-                                    {pay.category}
-                                  </span>
-                                  {pay.itemDescription && (
-                                    <p className="text-[11px] font-semibold text-pink-300 mt-1 font-mono flex items-center gap-1">
-                                      📦 {pay.itemDescription}
-                                    </p>
-                                  )}
-                                  {pay.gymRevenuePercentage !== undefined && pay.gymRevenuePercentage < 100 && (
-                                    <p className="text-[10px] font-semibold text-purple-300 mt-1 font-mono flex items-center gap-1">
-                                      🏋️ Gym {pay.gymRevenuePercentage}% Share (LKR {pay.gymRevenueAmount?.toLocaleString()})
-                                    </p>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="py-4 font-mono text-xs">
-                                <div className="font-extrabold text-white text-sm">
-                                  Total: LKR {pay.amount.toLocaleString()}
-                                </div>
-                                <div className="text-emerald-400 font-bold mt-0.5">
-                                  Paid: LKR {(pay.paidAmount !== undefined ? pay.paidAmount : pay.amount).toLocaleString()}
-                                </div>
-                                {pay.balanceDue !== undefined && pay.balanceDue > 0 ? (
-                                  <div className="text-rose-400 font-extrabold mt-0.5 bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-800/60 inline-block">
-                                    Balance: LKR {pay.balanceDue.toLocaleString()}
-                                  </div>
-                                ) : (
-                                  <div className="text-zinc-500 text-[10px]">
-                                    Balance: LKR 0 (Paid)
-                                  </div>
-                                )}
-                              </td>
-                              <td className="py-4">
-                                <div className="text-xs">
-                                  <div className="text-zinc-400">Paid: <span className="font-mono text-white">{pay.paymentDate}</span></div>
-                                  <div className="mt-0.5">Due: <span className={`font-mono font-bold ${pay.dueDate && new Date(pay.dueDate).setHours(0,0,0,0) < new Date().setHours(0,0,0,0) ? "text-rose-400 animate-pulse" : pay.status === "Overdue" ? "text-pink-400 animate-pulse" : pay.status === "Due Soon" ? "text-amber-400" : "text-zinc-300"}`}>{pay.dueDate}</span></div>
-                                </div>
-                              </td>
-                              <td className="py-4 text-xs text-zinc-300 font-medium">
-                                <span className="px-2 py-1 rounded bg-zinc-800 border border-zinc-700">{pay.method}</span>
-                              </td>
-                              <td className="py-4">
-                                {pay.dueDate && new Date(pay.dueDate).setHours(0,0,0,0) < new Date().setHours(0,0,0,0) ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30 shadow-[0_0_8px_rgba(244,63,94,0.3)]">
-                                    <AlertTriangle className="w-3 h-3 text-rose-400" /> Expired 🔴
-                                  </span>
-                                ) : pay.status === "Paid" ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-lime-500/15 text-lime-400 border border-lime-500/30 shadow-[0_0_8px_rgba(132,204,22,0.25)]">
-                                    <CheckCircle className="w-3 h-3" /> Paid & Active
-                                  </span>
-                                ) : pay.status === "Due Soon" ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                                    <Clock className="w-3 h-3" /> Due Soon (3 Days)
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-pink-500/15 text-pink-400 border border-pink-500/30 shadow-[0_0_8px_rgba(244,63,94,0.3)]">
-                                    <AlertTriangle className="w-3 h-3" /> Overdue ⚠️
-                                  </span>
-                                )}
-                              </td>
-                               <td className="py-4">
-                                 {pay.receiptSent || pay.reminderSent ? (
-                                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30">
-                                     <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> Sent
-                                   </span>
-                                 ) : (
-                                   <span className="text-[11px] text-zinc-500 italic">Not Sent</span>
-                                 )}
-                               </td>
-                              <td className="py-4 pr-2 text-right">
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <button
-                                    onClick={async () => {
-                                      if (!pay.memberId) {
-                                        alert("Digital App Chat receipt can only be sent to registered members.");
-                                        return;
-                                      }
-                                      const receiptMessageString = `Receipt *Payment Received*\nPackage: ${pay.category}\nAmount: LKR ${pay.amount.toLocaleString()}\nMethod: ${pay.method}\nDate: ${pay.paymentDate}\nInvoice No: ${pay.invoiceNo}\n\nThank you for your payment!`;
+                                      {pay.gymRevenuePercentage !== undefined && pay.gymRevenuePercentage < 100 && (
+                                        <p className="text-[10px] font-semibold text-purple-300 mt-1 font-mono flex items-center gap-1">
+                                          🏋️ Gym {pay.gymRevenuePercentage}% Share (LKR {pay.gymRevenueAmount?.toLocaleString()})
+                                        </p>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="py-4 font-mono text-xs">
+                                    <div className="font-extrabold text-white text-sm">
+                                      Total: LKR {pay.amount.toLocaleString()}
+                                    </div>
+                                    <div className="text-emerald-400 font-bold mt-0.5">
+                                      Paid: LKR {(pay.paidAmount !== undefined ? pay.paidAmount : pay.amount).toLocaleString()}
+                                    </div>
+                                    {pay.balanceDue !== undefined && pay.balanceDue > 0 ? (
+                                      <div className="text-rose-400 font-extrabold mt-0.5 bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-800/60 inline-block">
+                                        Balance: LKR {pay.balanceDue.toLocaleString()}
+                                      </div>
+                                    ) : (
+                                      <div className="text-zinc-500 text-[10px]">
+                                        Balance: LKR 0 (Paid)
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="py-4">
+                                    <div className="text-xs">
+                                      <div className="text-zinc-400">Paid: <span className="font-mono text-white">{pay.paymentDate}</span></div>
+                                      <div className="mt-0.5">Due: <span className={`font-mono font-bold ${pay.dueDate && new Date(pay.dueDate).setHours(0,0,0,0) < new Date().setHours(0,0,0,0) ? "text-rose-400 animate-pulse" : pay.status === "Overdue" ? "text-pink-400 animate-pulse" : pay.status === "Due Soon" ? "text-amber-400" : "text-zinc-300"}`}>{pay.dueDate}</span></div>
+                                      <div className="text-[10px] text-slate-500 mt-1">Recorded by: {pay.recorded_by || pay.recordedBy || "System"}</div>
+                                    </div>
+                                  </td>
+                                  <td className="py-4 text-xs text-zinc-300 font-medium">
+                                    <span className="px-2 py-1 rounded bg-zinc-800 border border-zinc-700">{pay.method}</span>
+                                  </td>
+                                  <td className="py-4">
+                                    {pay.dueDate && new Date(pay.dueDate).setHours(0,0,0,0) < new Date().setHours(0,0,0,0) ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30 shadow-[0_0_8px_rgba(244,63,94,0.3)]">
+                                        <AlertTriangle className="w-3 h-3 text-rose-400" /> Expired 🔴
+                                      </span>
+                                    ) : pay.status === "Paid" ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-lime-500/15 text-lime-400 border border-lime-500/30 shadow-[0_0_8px_rgba(132,204,22,0.25)]">
+                                        <CheckCircle className="w-3 h-3" /> Paid & Active
+                                      </span>
+                                    ) : pay.status === "Due Soon" ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                        <Clock className="w-3 h-3" /> Due Soon (3 Days)
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-pink-500/15 text-pink-400 border border-pink-500/30 shadow-[0_0_8px_rgba(244,63,94,0.3)]">
+                                        <AlertTriangle className="w-3 h-3" /> Overdue ⚠️
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-4">
+                                    {pay.receiptSent || pay.reminderSent ? (
+                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30">
+                                        <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> Sent
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] text-zinc-500 italic">Not Sent</span>
+                                    )}
+                                  </td>
+                                  <td className="py-4 pr-2 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        onClick={async () => {
+                                          if (!pay.memberId) {
+                                            alert("Digital App Chat receipt can only be sent to registered members.");
+                                            return;
+                                          }
+                                          const receiptMessageString = `Receipt *Payment Received*\nPackage: ${pay.category}\nAmount: LKR ${pay.amount.toLocaleString()}\nMethod: ${pay.method}\nDate: ${pay.paymentDate}\nInvoice No: ${pay.invoiceNo}\n\nThank you for your payment!`;
 
-                                      try {
-                                        const { data: chatData, error: chatErr } = await supabase
-                                          .from("chat_messages")
-                                          .insert([
-                                            {
-                                              member_id: pay.memberId,
-                                              sender_id: "admin",
-                                              receiver_id: pay.memberId,
-                                              message: receiptMessageString,
-                                            },
-                                          ])
-                                          .select();
+                                          try {
+                                            const { data: chatData, error: chatErr } = await supabase
+                                              .from("chat_messages")
+                                              .insert([
+                                                {
+                                                  member_id: pay.memberId,
+                                                  sender_id: "admin",
+                                                  receiver_id: pay.memberId,
+                                                  message: receiptMessageString,
+                                                },
+                                              ])
+                                              .select();
 
-                                        if (!chatErr && chatData) {
-                                          setPaymentRecords((prev) =>
-                                            prev.map((rec) =>
-                                              rec.id === pay.id ? { ...rec, reminderSent: true, receiptSent: true } : rec
-                                            )
-                                          );
-                                          await supabase
-                                            .from("payments")
-                                            .update({ receipt_sent: true, reminder_sent: true })
-                                            .or(`id.eq.${pay.id},invoice_no.eq.${pay.invoiceNo}`);
+                                            if (!chatErr && chatData) {
+                                              setPaymentRecords((prev) =>
+                                                prev.map((rec) =>
+                                                  rec.id === pay.id ? { ...rec, reminderSent: true, receiptSent: true } : rec
+                                                )
+                                              );
+                                              await supabase
+                                                .from("payments")
+                                                .update({ receipt_sent: true, reminder_sent: true })
+                                                .or(`id.eq.${pay.id},invoice_no.eq.${pay.invoiceNo}`);
 
-                                          alert(`✅ Digital Receipt for ${pay.invoiceNo} sent to Member App Chat!`);
-                                        } else {
-                                          alert(`⚠️ Failed to send chat message: ${chatErr?.message || "Error"}`);
-                                        }
-                                      } catch (err: any) {
-                                        alert(`⚠️ Exception sending chat message: ${err?.message || "Error"}`);
-                                      }
-                                    }}
-                                    className="p-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 transition-colors"
-                                    title="Send Digital Receipt via Member App Chat"
-                                  >
-                                    <MessageCircle className="w-4 h-4" />
-                                  </button>
-                                  {pay.status !== "Paid" && (
-                                    <button onClick={() => handleMarkAsPaid(pay.id)} className="px-2.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-xs transition-colors shadow-md" title="Mark Payment as Received / Paid">
-                                      Mark Paid
-                                    </button>
-                                  )}
-                                  <button onClick={() => alert(`Printing Invoice ${pay.invoiceNo} for ${pay.memberName}...`)} className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors" title="Print Receipt">
-                                    <Printer className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                            );
-                          });
-                        })()}
-                      </tbody>
-                    </table>
+                                              alert(`✅ Digital Receipt for ${pay.invoiceNo} sent to Member App Chat!`);
+                                            } else {
+                                              alert(`⚠️ Failed to send chat message: ${chatErr?.message || "Error"}`);
+                                            }
+                                          } catch (err: any) {
+                                            alert(`⚠️ Exception sending chat message: ${err?.message || "Error"}`);
+                                          }
+                                        }}
+                                        className="p-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 transition-colors"
+                                        title="Send Digital Receipt via Member App Chat"
+                                      >
+                                        <MessageCircle className="w-4 h-4" />
+                                      </button>
+                                      {pay.status !== "Paid" && (
+                                        <button onClick={() => handleMarkAsPaid(pay.id)} className="px-2.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-xs transition-colors shadow-md" title="Mark Payment as Received / Paid">
+                                          Mark Paid
+                                        </button>
+                                      )}
+                                      <button onClick={() => alert(`Printing Invoice ${pay.invoiceNo} for ${pay.memberName}...`)} className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors" title="Print Receipt">
+                                        <Printer className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeletePayment(pay.id)}
+                                        className="p-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/40 transition-colors"
+                                        title="Delete Payment Record"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            });
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             ) : (
               /* EXPENSES TRACKING VIEW */
@@ -6372,7 +6540,7 @@ export default function Home() {
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 border-b border-zinc-800/80 pb-3">
                         <div>
                           <h3 className="text-base font-bold text-white tracking-wide flex items-center gap-2">
-                            <TrendingDown className="w-4 h-4 text-rose-400" /> Expense Records Log (වියදම් ලේඛනය)
+                            <TrendingDown className="w-4 h-4 text-rose-400" /> Expense Records Log
                           </h3>
                           <p className="text-xs text-zinc-400 mt-0.5">Filter, delete, or export branch expense items to PDF and Excel.</p>
                         </div>
@@ -6600,7 +6768,7 @@ export default function Home() {
                   {/* Select Member Dropdown */}
                   <div>
                     <label className="block text-xs font-semibold text-zinc-400 mb-1">
-                      Select Member for QR Card (සාමාජිකයා තෝරන්න)
+                      Select Member for QR Card
                     </label>
                     <select
                       value={selectedQrMemberId}
@@ -6896,7 +7064,7 @@ export default function Home() {
                     setEditingCoach(null);
                     setCoachFormData({
                       name: "",
-                      specialization: "Bodybuilding & Strength",
+                      specialization: ["Bodybuilding & Muscle Gain"],
                       phone: "",
                       email: "",
                       experience: "3+ Years",
@@ -7186,7 +7354,7 @@ export default function Home() {
                             setEditingCoach(coach);
                             setCoachFormData({
                               name: coach.name,
-                              specialization: coach.specialization,
+                              specialization: parseSpecializationToArray(coach.specialization),
                               phone: coach.phone,
                               email: coach.email,
                               experience: coach.experience,
@@ -7244,7 +7412,7 @@ export default function Home() {
             {/* Chat Workspace (Grid 12 cols) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 h-[calc(100vh-230px)] min-h-[550px]">
               {/* Left Column (4 cols): Conversations List */}
-              <div className="lg:col-span-4 bg-[#0e1119] border border-slate-800 rounded-2xl flex flex-col overflow-hidden shadow-xl">
+              <div className={`${isMobileChatView ? "hidden lg:flex" : "flex"} lg:col-span-4 bg-[#0e1119] border border-slate-800 rounded-2xl flex-col overflow-hidden shadow-xl`}>
                 {/* Search Bar */}
                 <div className="p-3 border-b border-slate-800 bg-[#121624]">
                   <div className="relative">
@@ -7280,6 +7448,7 @@ export default function Home() {
                             setChatConversations((prev) =>
                               prev.map((c) => (c.id === conv.id ? { ...c, unreadCount: 0 } : c))
                             );
+                            setIsMobileChatView(true);
                           }}
                           className={`w-full text-left p-3.5 flex items-start gap-3 transition-all relative ${
                             isSelected
@@ -7345,7 +7514,7 @@ export default function Home() {
               </div>
 
               {/* Right Column (8 cols): Active Chat Area */}
-              <div className="lg:col-span-8 bg-[#0e1119] border border-slate-800 rounded-2xl flex flex-col overflow-hidden shadow-xl">
+              <div className={`${!isMobileChatView ? "hidden lg:flex" : "flex"} lg:col-span-8 bg-[#0e1119] border border-slate-800 rounded-2xl flex-col overflow-hidden shadow-xl`}>
                 {(() => {
                   const activeConv =
                     displayChatConversations.find((c) => c.memberId === activeChatMemberId) || displayChatConversations[0];
@@ -7366,9 +7535,19 @@ export default function Home() {
                   return (
                     <>
                       {/* Active Chat Header */}
-                      <div className="p-3.5 bg-[#121624] border-b border-slate-800 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className="relative">
+                      <div className="p-3.5 bg-[#121624] border-b border-slate-800 flex items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {/* Mobile Back Button */}
+                          <button
+                            onClick={() => setIsMobileChatView(false)}
+                            className="flex lg:hidden items-center gap-1 text-slate-300 hover:text-white px-2.5 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold shrink-0 cursor-pointer transition-colors"
+                            title="Back to Contact List"
+                          >
+                            <ArrowLeft className="w-4 h-4 text-teal-400" />
+                            <span>Back</span>
+                          </button>
+
+                          <div className="relative shrink-0">
                             {(() => {
                               const headerAvatarSrc = activeMemberData?.profile_pic_url || activeMemberData?.profilePicUrl || (activeConv as any)?.profile_pic_url;
 
@@ -7394,20 +7573,21 @@ export default function Home() {
                               }`}
                             />
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="text-sm font-bold text-white">{activeConv?.memberName || "Gym Member"}</h3>
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-teal-500/10 text-teal-300 border border-teal-500/30">
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <h3 className="text-sm font-bold text-white truncate max-w-[130px] sm:max-w-none">{activeConv?.memberName || "Gym Member"}</h3>
+                              <span className="hidden sm:inline-block text-[10px] font-bold px-2 py-0.5 rounded bg-teal-500/10 text-teal-300 border border-teal-500/30 shrink-0">
                                 {activeConv?.tier || "No Active Plan"}
                               </span>
                             </div>
-                            <p className="text-[11px] text-slate-400 font-mono">
+                            <p className="text-[11px] text-slate-400 font-mono truncate">
                               {activeConv?.phone || "N/A"} • {activeConv?.status === "Online" ? "Online Now 🟢" : activeConv?.lastActive || "Recently"}
                             </p>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 shrink-0">
                           {activeMemberData && (
                             <button
                               onClick={() => {
@@ -7416,7 +7596,7 @@ export default function Home() {
                               }}
                               className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all flex items-center gap-1.5 border border-slate-700 cursor-pointer"
                             >
-                              <Eye className="w-3.5 h-3.5 text-teal-400" /> Member Details
+                              <Eye className="w-3.5 h-3.5 text-teal-400" /> <span className="hidden sm:inline">Member Details</span>
                             </button>
                           )}
                           <button
@@ -7442,7 +7622,7 @@ export default function Home() {
                             className="px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 text-xs font-bold transition-all flex items-center gap-1.5 border border-rose-500/30 cursor-pointer"
                             title="Clear Chat History"
                           >
-                            <Trash2 className="w-3.5 h-3.5 text-rose-400" /> Clear Chat
+                            <Trash2 className="w-3.5 h-3.5 text-rose-400" /> <span className="hidden sm:inline">Clear Chat</span>
                           </button>
                         </div>
                       </div>
@@ -7451,6 +7631,12 @@ export default function Home() {
                       <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-[#0a0d14]">
                         {(activeConv?.messages || []).map((msg) => {
                           const isAdmin = msg.sender === "admin";
+                          const rawText = (msg.text || "").trim();
+                          const isImageMsg = rawText.startsWith("[IMAGE:");
+                          const imageUrl = isImageMsg
+                            ? rawText.replace(/^\[IMAGE:\s*/i, "").replace(/\]$/, "").trim()
+                            : "";
+
                           return (
                             <div
                               key={msg.id}
@@ -7463,7 +7649,20 @@ export default function Home() {
                                     : "bg-[#151924] text-slate-200 rounded-bl-none border border-slate-700/60"
                                 }`}
                               >
-                                <p className="leading-relaxed whitespace-pre-wrap font-normal">{msg.text}</p>
+                                {isImageMsg && imageUrl ? (
+                                  <a href={imageUrl} target="_blank" rel="noopener noreferrer" className="block">
+                                    <img
+                                      src={imageUrl}
+                                      alt="User uploaded image"
+                                      className="w-48 sm:w-64 rounded-lg object-cover border border-slate-700/50 hover:opacity-90 transition-opacity"
+                                      onError={(e) => {
+                                        (e.target as HTMLImageElement).alt = "Failed to load image";
+                                      }}
+                                    />
+                                  </a>
+                                ) : (
+                                  <p className="leading-relaxed whitespace-pre-wrap font-normal">{msg.text}</p>
+                                )}
 
                                 {msg.attachmentType === "workout" && (
                                   <div className="p-2 bg-black/30 rounded-lg text-[11px] font-bold text-teal-200 border border-teal-500/30 flex items-center gap-2">
@@ -7493,7 +7692,7 @@ export default function Home() {
                       </div>
 
                       {/* Quick Reply Preset Templates */}
-                      <div className="px-4 py-2 bg-[#101320] border-t border-slate-800 flex items-center gap-2 overflow-x-auto">
+                      <div className="px-3.5 py-2 bg-[#101320] border-t border-slate-800 flex items-center gap-2 overflow-x-auto whitespace-nowrap scrollbar-hide shrink-0">
                         <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 shrink-0">
                           <Sparkles className="w-3 h-3 text-teal-400" /> Quick Reply:
                         </span>
@@ -7502,7 +7701,7 @@ export default function Home() {
                             setSelectedTemplateContent(workoutTemplates[0]?.content || "");
                             setIsWorkoutPlanModalOpen(true);
                           }}
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-300 border border-slate-700 text-[11px] font-bold shrink-0 transition-all flex items-center gap-1"
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-300 border border-slate-700 text-[11px] font-bold shrink-0 transition-all flex items-center gap-1 cursor-pointer"
                         >
                           <Dumbbell className="w-3 h-3 text-teal-400" /> Send Workout Plan ⚙️
                         </button>
@@ -7511,7 +7710,7 @@ export default function Home() {
                             setSelectedTemplateContent(dietTemplates[0]?.content || "");
                             setIsDietPlanModalOpen(true);
                           }}
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 border border-slate-700 text-[11px] font-bold shrink-0 transition-all flex items-center gap-1"
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 border border-slate-700 text-[11px] font-bold shrink-0 transition-all flex items-center gap-1 cursor-pointer"
                         >
                           <Utensils className="w-3 h-3 text-purple-400" /> Send Diet Plan ⚙️
                         </button>
@@ -7520,7 +7719,7 @@ export default function Home() {
                             setCustomReminderText(`Hi ${activeConv?.memberName || "Member"}! Friendly reminder from IGYM Balangoda: Your monthly membership renewal fee is due soon. Please renew via Cash/POS at reception. Thank you! 💳`);
                             setIsPaymentReminderModalOpen(true);
                           }}
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 text-[11px] font-bold shrink-0 transition-all flex items-center gap-1"
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 text-[11px] font-bold shrink-0 transition-all flex items-center gap-1 cursor-pointer"
                         >
                           <CreditCard className="w-3 h-3 text-amber-400" /> Payment Reminder ⚙️
                         </button>
@@ -7549,7 +7748,7 @@ export default function Home() {
 
                         <input
                           type="text"
-                          placeholder={`Type a message to ${activeConv.memberName}... (පණිවිඩය ටයිප් කරන්න)`}
+                          placeholder={`Type a message to ${activeConv.memberName}...`}
                           value={chatInputText}
                           onChange={(e) => setChatInputText(e.target.value)}
                           className="flex-1 bg-[#181d2e] border border-slate-700/80 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-teal-500"
@@ -7569,6 +7768,8 @@ export default function Home() {
               </div>
             </div>
           </div>
+        ) : activeTab === "Website Settings" ? (
+          <WebsiteSettingsView />
         ) : activeTab === "Settings" ? (
           <div className="space-y-6">
             {/* Header & Save Button */}
@@ -7614,7 +7815,7 @@ export default function Home() {
 
                 <div className="space-y-3 text-xs sm:text-sm">
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Gym Name (ආයතනයේ නම)</label>
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Gym Name</label>
                     <input
                       type="text"
                       value={settingsForm.gymName}
@@ -7645,7 +7846,7 @@ export default function Home() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Physical Address (ලිපිනය)</label>
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Physical Address</label>
                     <input
                       type="text"
                       value={settingsForm.address}
@@ -7690,7 +7891,7 @@ export default function Home() {
 
                 <div className="space-y-3.5 text-xs sm:text-sm">
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">App Default Theme (මූලික තේමාව)</label>
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1">App Default Theme</label>
                     <select
                       value={settingsForm.appTheme}
                       onChange={(e) => setSettingsForm({ ...settingsForm, appTheme: e.target.value })}
@@ -7763,7 +7964,7 @@ export default function Home() {
                     </label>
 
                     <div>
-                      <label className="block text-xs font-semibold text-amber-400 mb-1">Global Banner Message (ප්‍රචාරණ බැනරය)</label>
+                      <label className="block text-xs font-semibold text-amber-400 mb-1">Global Banner Message</label>
                       <input
                         type="text"
                         placeholder="e.g. 🔥 Special Promo: Get 20% OFF on 6-Month Memberships this week!"
@@ -8331,7 +8532,7 @@ export default function Home() {
       {/* 2. ADD MEMBER MODAL */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#0e111a] border border-cyan-500/40 w-full max-w-xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh] my-auto overflow-hidden">
+          <div className="bg-[#0e111a] border border-cyan-500/40 w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh] my-auto overflow-hidden">
             
             {/* Fixed Header */}
             <div className="flex items-center justify-between border-b border-zinc-800 p-4 sm:p-5 shrink-0 bg-[#0e111a] z-10">
@@ -8345,38 +8546,38 @@ export default function Home() {
 
             {/* Scrollable Form Body */}
             <form onSubmit={handleAddSubmit} className="flex flex-col flex-1 overflow-hidden">
-              <div className="p-4 sm:p-6 space-y-4 text-xs sm:text-sm overflow-y-auto max-h-[calc(90vh-130px)] pr-2">
-                {/* Member ID & Name */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="col-span-1">
-                    <label className="block text-xs font-semibold text-cyan-400 mb-1">Member ID (අංකය) *</label>
+              <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-130px)]">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs sm:text-sm">
+                  {/* Member ID */}
+                  <div>
+                    <label className="block text-xs font-semibold text-cyan-400 mb-1">Member ID *</label>
                     <input
                       type="text"
                       required
                       placeholder="MEM022"
                       value={formData.memberId}
                       onChange={(e) => setFormData({ ...formData, memberId: e.target.value })}
-                      className="w-full bg-[#141724] border border-cyan-500/40 rounded-xl px-3 py-2.5 text-cyan-300 font-mono font-bold text-xs focus:outline-none focus:border-cyan-400"
+                      className="w-full bg-[#141724] border border-cyan-500/40 rounded-xl px-3.5 py-2.5 text-cyan-300 font-mono font-bold text-xs focus:outline-none focus:border-cyan-400"
                     />
                   </div>
-                  <div className="col-span-1 sm:col-span-2">
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Full Name (නම) *</label>
+
+                  {/* Full Name */}
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Full Name *</label>
                     <input
                       type="text"
                       required
                       placeholder="e.g. Nimal Perera"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 text-xs"
                     />
                   </div>
-                </div>
 
-                {/* Password & Phone in 2-Column Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Password */}
                   <div>
                     <label className="block text-xs font-semibold text-cyan-400 mb-1 flex items-center gap-1.5">
-                      <KeyRound className="w-3.5 h-3.5 text-cyan-400" /> Password (මුරපදය) *
+                      <KeyRound className="w-3.5 h-3.5 text-cyan-400" /> Password *
                     </label>
                     <input
                       type="password"
@@ -8388,206 +8589,115 @@ export default function Home() {
                       className="w-full bg-[#141724] border border-cyan-500/40 rounded-xl px-3.5 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-cyan-400"
                     />
                   </div>
+
+                  {/* Phone */}
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Phone (දුරකථන)</label>
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Phone</label>
                     <input
                       type="text"
                       placeholder="077 123 4567"
                       value={formData.phone}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 font-mono"
+                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
                     />
                   </div>
-                </div>
 
-                {/* Membership Package & Duration (කාලසීමාව) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Package (පැකේජය)</label>
-                    <select
-                      value={formData.tier}
-                      onChange={(e) => {
-                        const newTier = e.target.value;
-                        const isPT = newTier.toLowerCase().includes("personal training") || newTier.toLowerCase().includes("pt");
-                        setFormData({ ...formData, tier: newTier, isPTMember: isPT || formData.isPTMember });
-                      }}
-                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 font-medium text-xs"
-                    >
-                      {gymPackages.map((pkg) => (
-                        <option key={pkg.id} value={pkg.package_name || pkg.name}>
-                          {pkg.package_name || pkg.name} — LKR {pkg.price.toLocaleString()}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-cyan-400 mb-1 flex items-center justify-between">
-                      <span>Duration (කාලසීමාව) *</span>
-                      <span className="text-[10px] text-cyan-300 font-mono font-bold bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/30">
-                        Expiry: {calculateExpiryDate(new Date(), formData.durationMonths || 1)}
-                      </span>
-                    </label>
-                    <select
-                      value={formData.durationMonths || 1}
-                      onChange={(e) => setFormData({ ...formData, durationMonths: Number(e.target.value) })}
-                      className="w-full bg-[#141724] border border-cyan-500/40 rounded-xl px-3.5 py-2.5 text-cyan-300 focus:outline-none focus:border-cyan-400 font-bold text-xs"
-                    >
-                      <option value={1}>1 Month (Default)</option>
-                      <option value={3}>3 Months</option>
-                      <option value={6}>6 Months</option>
-                      <option value={12}>12 Months</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Address Field */}
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Address (ලිපිනය)</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Main Street, Balangoda"
-                    value={formData.address}
-                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-
-                {/* PT Member VIP Toggle Switch */}
-                <div className="p-3 bg-[#13101c] border border-amber-500/30 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Flame className="w-4 h-4 text-amber-400" />
-                    <div>
-                      <span className="text-xs font-bold text-amber-300">Personal Training (PT) Member</span>
-                      <p className="text-[10px] text-zinc-400">Enable exclusive PT Body Metrics & Transformation Tracking</p>
-                    </div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={
-                        Boolean(
-                          formData.isPTMember ||
-                          formData.tier.toLowerCase().includes("personal training") ||
-                          formData.tier.toLowerCase().includes("pt")
-                        )
-                      }
-                      onChange={(e) => setFormData({ ...formData, isPTMember: e.target.checked })}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500" />
-                  </label>
-                </div>
-
-                {/* Standard Height & Weight Metrics */}
-                <div className="bg-[#121522] border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-cyan-400 uppercase tracking-wide">Standard Fitness Metrics</span>
-                    <span className="text-xs font-mono text-lime-400 font-bold">
-                      BMI: {calculateBMI(formData.weight, formData.height)}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-400 mb-1">Height (උස cm)</label>
-                      <input
-                        type="number"
-                        required
-                        min="100"
-                        max="250"
-                        value={formData.height}
-                        onChange={(e) => setFormData({ ...formData, height: Number(e.target.value) })}
-                        className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-cyan-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-400 mb-1">Weight (බර kg)</label>
-                      <input
-                        type="number"
-                        required
-                        min="30"
-                        max="250"
-                        step="0.1"
-                        value={formData.weight}
-                        onChange={(e) => setFormData({ ...formData, weight: Number(e.target.value) })}
-                        className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* DYNAMIC PT FITNESS GOALS SECTION (ONLY IF PT PACKAGE OR PT TOGGLE ACTIVE) */}
-                {(formData.isPTMember ||
-                  formData.tier.toLowerCase().includes("personal training") ||
-                  formData.tier.toLowerCase().includes("pt")) && (
-                  <div className="bg-gradient-to-br from-[#1c1424] via-[#151220] to-[#0f1424] border border-amber-500/50 rounded-xl p-4 space-y-3 animate-in slide-in-from-top-3 duration-200">
-                    <div className="flex items-center justify-between border-b border-amber-500/30 pb-2">
-                      <span className="text-xs font-extrabold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
-                        <Flame className="w-4 h-4 text-amber-400" /> PT FITNESS GOALS (පෞද්ගලික පුහුණු අරමුණු)
-                      </span>
-                      <span className="text-[10px] font-bold text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40">
-                        Exclusive PT Tracking ⭐
-                      </span>
-                    </div>
-
-                    <div className="w-full">
-                      <label className="block text-xs font-semibold text-amber-300 mb-1">Fitness Goals (පුහුණු ඉලක්ක)</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. 5kg Fat Loss & Body Recomposition in 3 Months"
-                        value={formData.fitnessGoals}
-                        onChange={(e) => setFormData({ ...formData, fitnessGoals: e.target.value })}
-                        className="w-full bg-[#100d18] border border-amber-500/40 rounded-xl px-3.5 py-2.5 text-amber-100 text-xs focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Emergency Contact & Status in 2-Column Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Emergency Contact</label>
+                  {/* Address Field (Full-width) */}
+                  <div className="col-span-1 md:col-span-2">
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Address</label>
                     <input
                       type="text"
-                      placeholder="e.g. Spouse / Parent Contact"
-                      value={formData.emergencyContact}
-                      onChange={(e) => setFormData({ ...formData, emergencyContact: e.target.value })}
-                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                      placeholder="e.g. Main Street, Balangoda"
+                      value={formData.address}
+                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 text-xs"
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Membership Status</label>
-                    <div className="flex gap-4 pt-2">
-                      <label className="flex items-center gap-2 cursor-pointer">
+                  {/* Standard Height & Weight Metrics */}
+                  <div className="bg-[#121522] border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-cyan-400 uppercase tracking-wide">Standard Fitness Metrics</span>
+                      <span className="text-xs font-mono text-lime-400 font-bold">
+                        BMI: {calculateBMI(formData.weight ?? 0, formData.height ?? 0)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-400 mb-1">Height (cm)</label>
                         <input
-                          type="radio"
-                          name="addStatus"
-                          value="Active"
-                          checked={formData.status === "Active"}
-                          onChange={() => setFormData({ ...formData, status: "Active" })}
-                          className="accent-lime-400"
+                          type="number"
+                          required
+                          min="0"
+                          max="250"
+                          value={formData.height ?? 0}
+                          onChange={(e) => setFormData({ ...formData, height: Number(e.target.value) })}
+                          className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-cyan-500 text-xs"
                         />
-                        <span className="text-xs text-lime-400 font-bold">Active</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-400 mb-1">Weight (kg)</label>
                         <input
-                          type="radio"
-                          name="addStatus"
-                          value="Inactive"
-                          checked={formData.status === "Inactive"}
-                          onChange={() => setFormData({ ...formData, status: "Inactive" })}
-                          className="accent-pink-500"
+                          type="number"
+                          required
+                          min="0"
+                          max="250"
+                          step="0.1"
+                          value={formData.weight ?? 0}
+                          onChange={(e) => setFormData({ ...formData, weight: Number(e.target.value) })}
+                          className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-500 text-xs"
                         />
-                        <span className="text-xs text-zinc-400">Inactive</span>
-                      </label>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="p-3 bg-pink-500/10 border border-pink-500/30 rounded-xl flex items-center gap-2 text-xs text-pink-300">
-                  <QrCode className="w-4 h-4 text-pink-400 shrink-0" />
-                  <span>Creates Member App account (<strong>{formData.memberId ? formData.memberId.trim().toUpperCase().replace(/^MEM-/, "MEM") : "MEM022"}@gym.com</strong>) &amp; Digital QR Pass.</span>
+                  {/* Emergency Contact & Membership Status */}
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-400 mb-1">Emergency Contact</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Spouse / Parent Contact"
+                        value={formData.emergencyContact}
+                        onChange={(e) => setFormData({ ...formData, emergencyContact: e.target.value })}
+                        className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 text-xs"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-400 mb-1">Membership Status</label>
+                      <div className="flex gap-4 pt-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="addStatus"
+                            value="Active"
+                            checked={formData.status === "Active"}
+                            onChange={() => setFormData({ ...formData, status: "Active" })}
+                            className="accent-lime-400"
+                          />
+                          <span className="text-xs text-lime-400 font-bold">Active</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="addStatus"
+                            value="Inactive"
+                            checked={formData.status === "Inactive"}
+                            onChange={() => setFormData({ ...formData, status: "Inactive" })}
+                            className="accent-pink-500"
+                          />
+                          <span className="text-xs text-zinc-400">Inactive</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Bottom Info Box (Full-width) */}
+                  <div className="col-span-1 md:col-span-2 p-3 bg-pink-500/10 border border-pink-500/30 rounded-xl flex items-center gap-2 text-xs text-pink-300">
+                    <QrCode className="w-4 h-4 text-pink-400 shrink-0" />
+                    <span>Creates Member App account (<strong>{formData.memberId ? formData.memberId.trim().toUpperCase().replace(/^MEM-/, "MEM") : "MEM022"}@gym.com</strong>) &amp; Digital QR Pass.</span>
+                  </div>
                 </div>
               </div>
 
@@ -8597,14 +8707,14 @@ export default function Home() {
                   type="button"
                   disabled={isSubmittingMember}
                   onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs font-bold disabled:opacity-50"
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs font-bold disabled:opacity-50 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmittingMember}
-                  className="px-5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-black shadow-lg shadow-cyan-500/25 flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-black shadow-lg shadow-cyan-500/25 flex items-center gap-2 disabled:opacity-50 cursor-pointer transition-all active:scale-95"
                 >
                   {isSubmittingMember ? (
                     <>
@@ -8623,7 +8733,7 @@ export default function Home() {
       {/* 3. EDIT MEMBER MODAL */}
       {isEditModalOpen && selectedMember && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-[#0e111a] border border-amber-500/40 w-full max-w-lg rounded-2xl p-6 shadow-2xl space-y-5 my-8">
+          <div className="bg-[#0e111a] border border-amber-500/40 w-full max-w-4xl rounded-2xl p-6 shadow-2xl space-y-5 my-8">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <Pencil className="w-5 h-5 text-amber-400" /> Edit Member ({selectedMember.id})
@@ -8633,19 +8743,27 @@ export default function Home() {
               </button>
             </div>
 
-            <form onSubmit={handleEditSubmit} className="space-y-4 text-xs sm:text-sm">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
-                />
-              </div>
+            {/* Active Package Banner */}
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between">
+              <span className="text-xs font-bold text-amber-300 uppercase tracking-wide">Active Package</span>
+              <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/20 px-3 py-1 rounded-lg border border-amber-500/40">
+                {selectedMember.tier || formData.tier || "Standard"}
+              </span>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleEditSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs sm:text-sm">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-zinc-400 mb-1">Phone</label>
                   <input
@@ -8655,8 +8773,9 @@ export default function Home() {
                     className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-amber-500"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Change Package (පැකේජය මාරු කිරීම)</label>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Change Package</label>
                   <select
                     value={formData.tier}
                     onChange={(e) => {
@@ -8673,171 +8792,113 @@ export default function Home() {
                     ))}
                   </select>
                 </div>
-              </div>
 
-              {/* PT Member VIP Toggle Switch */}
-              <div className="p-3 bg-[#13101c] border border-amber-500/30 rounded-xl flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Flame className="w-4 h-4 text-amber-400" />
-                  <div>
-                    <span className="text-xs font-bold text-amber-300">Personal Training (PT) Member</span>
-                    <p className="text-[10px] text-zinc-400">Enable exclusive PT Body Metrics & Transformation Tracking</p>
-                  </div>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Address</label>
                   <input
-                    type="checkbox"
-                    checked={
-                      Boolean(
-                        formData.isPTMember ||
-                        (formData.tier &&
-                          (formData.tier.toLowerCase().includes("personal training") ||
-                            formData.tier.toLowerCase().includes("pt")))
-                      )
-                    }
-                    onChange={(e) => setFormData({ ...formData, isPTMember: e.target.checked })}
-                    className="sr-only peer"
+                    type="text"
+                    value={formData.address}
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                    className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
                   />
-                  <div className="w-9 h-5 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500" />
-                </label>
-              </div>
-
-              {/* DYNAMIC PT FITNESS GOALS SECTION (ONLY IF PT PACKAGE OR PT TOGGLE ACTIVE) */}
-              {(formData.isPTMember ||
-                (formData.tier &&
-                  (formData.tier.toLowerCase().includes("personal training") ||
-                    formData.tier.toLowerCase().includes("pt")))) && (
-                <div className="bg-gradient-to-br from-[#1c1424] via-[#151220] to-[#0f1424] border border-amber-500/50 rounded-xl p-3.5 space-y-2.5 animate-in slide-in-from-top-3 duration-200">
-                  <div className="flex items-center justify-between border-b border-amber-500/30 pb-2">
-                    <span className="text-xs font-extrabold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <Flame className="w-4 h-4 text-amber-400" /> PT FITNESS GOALS
-                    </span>
-                    <span className="text-[10px] font-bold text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40">
-                      Exclusive PT Tracking ⭐
-                    </span>
-                  </div>
-
-                  <div className="w-full">
-                    <label className="block text-xs font-semibold text-amber-300 mb-1">Fitness Goals (පුහුණු ඉලක්ක)</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 5kg Fat Loss & Body Recomposition in 3 Months"
-                      value={formData.fitnessGoals}
-                      onChange={(e) => setFormData({ ...formData, fitnessGoals: e.target.value })}
-                      className="w-full bg-[#171324] border border-amber-500/40 rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 text-xs"
-                    />
-                  </div>
                 </div>
-              )}
 
-              {/* Height & Weight */}
-              <div className="bg-[#121522] border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-amber-400 uppercase tracking-wide">Fitness Metrics</span>
-                  <span className="text-xs font-mono text-lime-400 font-bold">
-                    BMI: {calculateBMI(formData.weight, formData.height)}
-                  </span>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Emergency Contact</label>
+                  <input
+                    type="text"
+                    value={formData.emergencyContact}
+                    onChange={(e) => setFormData({ ...formData, emergencyContact: e.target.value })}
+                    className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
+                  />
                 </div>
-                <div className="grid grid-cols-3 gap-2.5">
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-400 mb-1">Height (cm)</label>
-                    <input
-                      type="number"
-                      placeholder="e.g. 175"
-                      value={formData.height}
-                      onChange={(e) => setFormData({ ...formData, height: e.target.value })}
-                      className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-2.5 py-2 text-white font-mono focus:outline-none focus:border-amber-500 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-400 mb-1">Weight (kg)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      placeholder="e.g. 75"
-                      value={formData.weight}
-                      onChange={(e) => setFormData({ ...formData, weight: e.target.value })}
-                      className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-2.5 py-2 text-white font-mono focus:outline-none focus:border-amber-500 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-emerald-400 mb-1">Target (kg)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      placeholder="e.g. 70"
-                      value={formData.targetWeight}
-                      onChange={(e) => setFormData({ ...formData, targetWeight: e.target.value })}
-                      className="w-full bg-[#181c2e] border border-emerald-500/40 rounded-xl px-2.5 py-2 text-white font-mono focus:outline-none focus:border-emerald-400 text-xs font-bold"
-                    />
-                  </div>
-                </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">Address</label>
-                <input
-                  type="text"
-                  value={formData.address}
-                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                  className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">Emergency Contact</label>
-                <input
-                  type="text"
-                  value={formData.emergencyContact}
-                  onChange={(e) => setFormData({ ...formData, emergencyContact: e.target.value })}
-                  className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-amber-400 mb-1 flex items-center gap-1.5">
-                  <CalendarCheck className="w-3.5 h-3.5 text-amber-400" /> Manual Expiry Date
-                </label>
-                <input
-                  type="date"
-                  value={formData.expiryDate || ""}
-                  onChange={(e) => setFormData({ ...formData, expiryDate: e.target.value })}
-                  className="w-full bg-[#141724] border border-amber-500/40 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 text-xs font-mono font-bold"
-                />
-                <p className="text-[10px] text-zinc-500 mt-1">
-                  Override member expiration date manually for medical leave or custom extensions.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">Status</label>
-                <div className="flex gap-4 pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="editStatus"
-                      value="Active"
-                      checked={formData.status === "Active"}
-                      onChange={() => setFormData({ ...formData, status: "Active" })}
-                      className="accent-lime-400"
-                    />
-                    <span className="text-xs text-lime-400 font-bold">Active</span>
+                <div>
+                  <label className="block text-xs font-semibold text-amber-400 mb-1 flex items-center gap-1.5">
+                    <CalendarCheck className="w-3.5 h-3.5 text-amber-400" /> Manual Expiry Date
                   </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="editStatus"
-                      value="Inactive"
-                      checked={formData.status === "Inactive"}
-                      onChange={() => setFormData({ ...formData, status: "Inactive" })}
-                      className="accent-pink-500"
-                    />
-                    <span className="text-xs text-zinc-400">Inactive</span>
-                  </label>
+                  <input
+                    type="date"
+                    value={formData.expiryDate || ""}
+                    onChange={(e) => setFormData({ ...formData, expiryDate: e.target.value })}
+                    className="w-full bg-[#141724] border border-amber-500/40 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 text-xs font-mono font-bold"
+                  />
+                </div>
+
+                {/* Fitness Metrics */}
+                <div className="md:col-span-2 bg-[#121522] border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wide">Fitness Metrics</span>
+                    <span className="text-xs font-mono text-lime-400 font-bold">
+                      BMI: {calculateBMI(formData.weight, formData.height)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-400 mb-1">Height (cm)</label>
+                      <input
+                        type="number"
+                        placeholder="e.g. 175"
+                        value={formData.height}
+                        onChange={(e) => setFormData({ ...formData, height: e.target.value })}
+                        className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-2.5 py-2 text-white font-mono focus:outline-none focus:border-amber-500 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-400 mb-1">Weight (kg)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="e.g. 75"
+                        value={formData.weight}
+                        onChange={(e) => setFormData({ ...formData, weight: e.target.value })}
+                        className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-2.5 py-2 text-white font-mono focus:outline-none focus:border-amber-500 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-emerald-400 mb-1">Target (kg)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="e.g. 70"
+                        value={formData.targetWeight}
+                        onChange={(e) => setFormData({ ...formData, targetWeight: e.target.value })}
+                        className="w-full bg-[#181c2e] border border-emerald-500/40 rounded-xl px-2.5 py-2 text-white font-mono focus:outline-none focus:border-emerald-400 text-xs font-bold"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Status</label>
+                  <div className="flex gap-4 pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="editStatus"
+                        value="Active"
+                        checked={formData.status === "Active"}
+                        onChange={() => setFormData({ ...formData, status: "Active" })}
+                        className="accent-lime-400"
+                      />
+                      <span className="text-xs text-lime-400 font-bold">Active</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="editStatus"
+                        value="Inactive"
+                        checked={formData.status === "Inactive"}
+                        onChange={() => setFormData({ ...formData, status: "Inactive" })}
+                        className="accent-pink-500"
+                      />
+                      <span className="text-xs text-zinc-400">Inactive</span>
+                    </label>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-zinc-800">
                 <button
                   type="button"
                   onClick={() => setIsEditModalOpen(false)}
@@ -8847,9 +8908,16 @@ export default function Home() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-black shadow-lg shadow-amber-500/25"
+                  disabled={isSubmittingMember}
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-black shadow-lg shadow-amber-500/25 flex items-center gap-2 disabled:opacity-50 cursor-pointer"
                 >
-                  Update Member
+                  {isSubmittingMember ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    "Save Changes"
+                  )}
                 </button>
               </div>
             </form>
@@ -8888,14 +8956,12 @@ export default function Home() {
         </div>
       )}
 
-
-
       {/* 6. RECORD NEW PAYMENT MODAL */}
       {isRecordPaymentModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#120f1a] border border-purple-500/40 w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-[#120f1a] border border-purple-500/40 w-full max-w-4xl rounded-2xl p-5 shadow-2xl space-y-3.5 my-auto max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+              <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-purple-400" /> Record Fee Payment
               </h3>
               <button
@@ -8909,14 +8975,14 @@ export default function Home() {
               </button>
             </div>
 
-            <form onSubmit={handleRecordPaymentSubmit} className="space-y-4 text-xs sm:text-sm">
-              {/* Searchable Member Combobox / Autocomplete */}
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">Select Member (සාමාජිකයා)</label>
+            <form onSubmit={handleRecordPaymentSubmit} className="space-y-4 text-xs">
+              {/* Section 1: Member Selection Section (Top) */}
+              <div className="p-4 rounded-xl bg-indigo-950/30 border border-indigo-500/20">
+                <label className="block text-xs font-semibold text-indigo-300 mb-1.5">Select Member *</label>
                 
                 <div className="relative">
                   <div className="relative flex items-center">
-                    <Search className="w-4 h-4 text-purple-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <Search className="w-4 h-4 text-indigo-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="text"
                       placeholder="Type Member ID (e.g. MEM-001) or Name..."
@@ -8926,7 +8992,7 @@ export default function Home() {
                         setMemberComboboxQuery(e.target.value);
                         setIsMemberComboboxOpen(true);
                       }}
-                      className="w-full bg-[#171424] border border-purple-500/40 rounded-xl pl-10 pr-9 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-purple-400 font-medium"
+                      className="w-full bg-[#171424] border border-indigo-500/40 rounded-xl pl-10 pr-9 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-400 font-medium"
                     />
                     {memberComboboxQuery ? (
                       <button
@@ -8949,13 +9015,13 @@ export default function Home() {
                     if (paymentFormData.memberId === "WALK_IN") {
                       return (
                         <div className="mt-2 p-2.5 rounded-xl bg-[#241c14] border border-amber-500/40 flex items-center justify-between">
-                          <div className="flex items-center gap-2.5">
+                          <div className="flex items-center gap-2">
                             <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center font-bold text-amber-300 text-xs">
                               🛍️
                             </div>
                             <div>
                               <div className="text-xs font-bold text-amber-300 leading-none">Walk-in / External Income</div>
-                              <div className="text-[10px] text-zinc-400 font-mono mt-0.5">Non-member / Guest Payment</div>
+                              <div className="text-[10px] text-zinc-400 font-mono">Non-member / Guest Payment</div>
                             </div>
                           </div>
                           <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-bold">
@@ -8968,14 +9034,14 @@ export default function Home() {
                     const selectedMem = members.find((m) => m.id === paymentFormData.memberId);
                     if (!selectedMem) return null;
                     return (
-                      <div className="mt-2 p-2.5 rounded-xl bg-[#1c172e] border border-purple-500/30 flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-purple-500/20 border border-purple-400/40 flex items-center justify-center font-bold text-purple-300 text-xs">
+                      <div className="mt-2 p-2.5 rounded-xl bg-[#1c172e] border border-indigo-500/30 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-full bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-xs font-bold text-indigo-300">
                             {selectedMem.name.charAt(0)}
                           </div>
                           <div>
                             <div className="text-xs font-bold text-white leading-none">{selectedMem.name}</div>
-                            <div className="text-[10px] text-purple-300 font-mono mt-0.5">{selectedMem.id} • {selectedMem.tier}</div>
+                            <div className="text-[10px] text-indigo-300 font-mono">{selectedMem.id} • {selectedMem.tier}</div>
                           </div>
                         </div>
                         <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 font-bold">
@@ -8987,24 +9053,23 @@ export default function Home() {
 
                   {/* Dynamic Walk-in Payer Name / Reference Input */}
                   {paymentFormData.memberId === "WALK_IN" && (
-                    <div className="mt-2.5 space-y-1 animate-in fade-in slide-in-from-top-2 duration-150">
+                    <div className="mt-2 space-y-0.5">
                       <label className="block text-xs font-semibold text-amber-300">
-                        Payer Name / Reference (නම / විස්තරය) *
+                        Payer Name / Reference *
                       </label>
                       <input
                         type="text"
                         placeholder="e.g. Kasun Perera (Walk-in Guest) or Day Pass Sales"
                         value={paymentFormData.externalPayerName}
                         onChange={(e) => setPaymentFormData({ ...paymentFormData, externalPayerName: e.target.value })}
-                        className="w-full bg-[#181424] border border-amber-500/40 rounded-xl px-3.5 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 text-xs font-medium"
+                        className="w-full bg-[#181424] border border-amber-500/40 rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 text-xs font-medium"
                       />
                     </div>
                   )}
 
                   {/* Autocomplete Dropdown Popover */}
                   {isMemberComboboxOpen && (
-                    <div className="absolute left-0 right-0 top-12 z-50 bg-[#161224] border border-purple-500/40 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-zinc-800/60 animate-in fade-in zoom-in-95 duration-150">
-                      {/* STATIC TOP OPTION: Walk-in / External Income */}
+                    <div className="absolute left-0 right-0 top-11 z-50 bg-[#161224] border border-indigo-500/40 rounded-xl shadow-2xl max-h-48 overflow-y-auto divide-y divide-zinc-800/60 animate-in fade-in zoom-in-95 duration-150">
                       <button
                         type="button"
                         onClick={() => {
@@ -9020,13 +9085,13 @@ export default function Home() {
                           paymentFormData.memberId === "WALK_IN" ? "bg-amber-950/60 border-l-2 border-amber-400" : "bg-[#1f192b]"
                         }`}
                       >
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-xs font-bold text-amber-300">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-xs font-bold text-amber-300">
                             🛍️
                           </div>
                           <div>
                             <span className="text-xs font-bold text-amber-300 block">Walk-in / External Income (No Member)</span>
-                            <span className="text-[10px] text-zinc-400 font-mono">Guest Sales, One-off Supplements, Walk-in Pass</span>
+                            <span className="text-[10px] text-zinc-400 font-mono">Guest Sales, Supplements, Walk-in Pass</span>
                           </div>
                         </div>
                         <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-bold">
@@ -9044,7 +9109,7 @@ export default function Home() {
 
                         if (filtered.length === 0) {
                           return (
-                            <div className="p-3 text-center text-xs text-zinc-400 italic">
+                            <div className="p-2.5 text-center text-xs text-zinc-400 italic">
                               No registered member found matching "{memberComboboxQuery}"
                             </div>
                           );
@@ -9057,12 +9122,13 @@ export default function Home() {
                             onClick={() => {
                               const newCat = m.tier && gymPackages.some((p) => p.name === m.tier) ? m.tier : paymentFormData.category;
                               const calc = calculatePaymentAmount(newCat, paymentFormData.durationMonths);
+                              const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
                               setPaymentFormData({
                                 ...paymentFormData,
                                 memberId: m.id,
                                 category: newCat,
-                                amount: calc.finalAmount,
-                                paidAmount: calc.finalAmount,
+                                amount: finalAmt,
+                                paidAmount: finalAmt,
                               });
                               setMemberComboboxQuery(`${m.name} (${m.id})`);
                               setIsMemberComboboxOpen(false);
@@ -9071,8 +9137,8 @@ export default function Home() {
                               paymentFormData.memberId === m.id ? "bg-purple-950/60 border-l-2 border-purple-400" : ""
                             }`}
                           >
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-7 h-7 rounded-full bg-purple-500/20 border border-purple-400/30 flex items-center justify-center text-xs font-bold text-purple-300">
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 rounded-full bg-purple-500/20 border border-purple-400/30 flex items-center justify-center text-xs font-bold text-purple-300">
                                 {m.name.charAt(0)}
                               </div>
                               <div>
@@ -9091,232 +9157,281 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Fee Category (Package) & Duration Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Fee Package (පැකේජය)</label>
-                  <select
-                    value={paymentFormData.category}
-                    onChange={(e) => {
-                      const newCat = e.target.value;
-                      const calc = calculatePaymentAmount(newCat, paymentFormData.durationMonths);
-                      setPaymentFormData({ ...paymentFormData, category: newCat, amount: calc.finalAmount, paidAmount: calc.finalAmount });
-                    }}
-                    className="w-full bg-[#171424] border border-zinc-800 rounded-xl px-3 py-2.5 text-white font-bold focus:outline-none focus:border-purple-500 text-xs"
-                  >
-                    <option value="Admission Fee">Admission Fee — LKR 1,500</option>
-                    <option value="Supplements & Merchandise">Supplements & Merchandise (සප්ලිමන්ට් / භාණ්ඩ)</option>
-                    <optgroup label="Official Membership Tiers">
-                      {gymPackages.map((pkg) => (
-                        <option key={pkg.id} value={pkg.package_name || pkg.name}>
-                          {pkg.package_name || pkg.name} — LKR {pkg.price.toLocaleString()}/mo
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
-                </div>
+              {/* Section 2: Core Payment Details (Middle) */}
+              <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/50 mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Fee Package */}
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Fee Package</label>
+                    <select
+                      value={paymentFormData.category}
+                      onChange={(e) => {
+                        const newCat = e.target.value;
+                        const calc = calculatePaymentAmount(newCat, paymentFormData.durationMonths);
+                        const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
+                        setPaymentFormData({ ...paymentFormData, category: newCat, amount: finalAmt, paidAmount: finalAmt });
+                      }}
+                      className="w-full bg-[#171424] border border-zinc-700 rounded-xl px-3 py-2 text-white font-bold focus:outline-none focus:border-purple-500 text-xs"
+                    >
+                      <option value="Admission Fee">Admission Fee — LKR 1,500</option>
+                      <option value="Supplements & Merchandise">Supplements & Merchandise</option>
+                      <optgroup label="Official Membership Tiers">
+                        {gymPackages.map((pkg) => (
+                          <option key={pkg.id} value={pkg.package_name || pkg.name}>
+                            {pkg.package_name || pkg.name} — LKR {pkg.price.toLocaleString()}/mo
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-purple-400 mb-1">Duration (කාලසීමාව)</label>
-                  <select
-                    value={paymentFormData.durationMonths}
-                    onChange={(e) => {
-                      const newMonths = Number(e.target.value);
-                      const calc = calculatePaymentAmount(paymentFormData.category, newMonths);
-                      setPaymentFormData({ ...paymentFormData, durationMonths: newMonths, amount: calc.finalAmount, paidAmount: calc.finalAmount });
-                    }}
-                    className="w-full bg-[#171424] border border-purple-500/40 rounded-xl px-3 py-2.5 text-purple-300 font-bold focus:outline-none focus:border-purple-400 text-xs"
-                  >
-                    <option value={1}>1 Month (Standard)</option>
-                    <option value={3}>3 Months (10% OFF)</option>
-                    <option value={6}>6 Months (20% OFF)</option>
-                    <option value={12}>12 Months (30% OFF)</option>
-                  </select>
+                  {/* Duration */}
+                  <div>
+                    <label className="block text-xs font-semibold text-purple-400 mb-1">Duration</label>
+                    <select
+                      value={paymentFormData.durationMonths}
+                      onChange={(e) => {
+                        const newMonths = Number(e.target.value);
+                        const calc = calculatePaymentAmount(paymentFormData.category, newMonths);
+                        const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
+                        setPaymentFormData({ ...paymentFormData, durationMonths: newMonths, amount: finalAmt, paidAmount: finalAmt });
+                      }}
+                      className="w-full bg-[#171424] border border-purple-500/40 rounded-xl px-3 py-2 text-purple-300 font-bold focus:outline-none focus:border-purple-400 text-xs"
+                    >
+                      <option value={1}>1 Month (Standard)</option>
+                      <option value={3}>3 Months (10% OFF)</option>
+                      <option value={6}>6 Months (20% OFF)</option>
+                      <option value={12}>12 Months (30% OFF)</option>
+                    </select>
+                  </div>
+
+                  {/* Payment Date */}
+                  <div>
+                    <label className="block text-xs font-semibold text-purple-400 mb-1 flex items-center gap-1">
+                      <CalendarCheck className="w-3.5 h-3.5 text-purple-400" /> Payment Date *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={paymentFormData.paymentDate || new Date().toISOString().split("T")[0]}
+                      onChange={(e) => setPaymentFormData({ ...paymentFormData, paymentDate: e.target.value })}
+                      className="w-full bg-[#171424] border border-purple-500/40 rounded-xl px-3 py-2 text-white font-mono font-bold text-xs focus:outline-none focus:border-purple-400"
+                    />
+                  </div>
+
+                  {/* Payment Method */}
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Payment Method</label>
+                    <select
+                      value={paymentFormData.method}
+                      onChange={(e) => setPaymentFormData({ ...paymentFormData, method: e.target.value as any })}
+                      className="w-full bg-[#171424] border border-zinc-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500 text-xs"
+                    >
+                      <option value="Cash">Cash</option>
+                      <option value="Card POS">Card POS Machine</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Online">Online / PayHere</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              {/* Item Description Input (Displayed only when Supplements & Merchandise is selected) */}
-              {paymentFormData.category === "Supplements & Merchandise" && (
-                <div>
-                  <label className="block text-xs font-semibold text-pink-400 mb-1">
-                    Item Description (භාණ්ඩයේ විස්තරය)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Whey Protein 1kg, Creatine 300g, Gym Shaker Bottle"
-                    value={paymentFormData.itemDescription}
-                    onChange={(e) => setPaymentFormData({ ...paymentFormData, itemDescription: e.target.value })}
-                    className="w-full bg-[#171424] border border-pink-500/40 rounded-xl px-3.5 py-2.5 text-white font-medium focus:outline-none focus:border-pink-400 text-xs"
-                  />
-                </div>
-              )}
-
-              {/* Gym Revenue Share (%) Input (Displayed when PT package is selected) */}
-              {(paymentFormData.category.toLowerCase().includes("pt") || paymentFormData.category.toLowerCase().includes("personal training")) && (
-                <div className="p-3 bg-purple-950/40 border border-purple-500/30 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <label className="font-bold text-purple-300 flex items-center gap-1.5">
-                      <Dumbbell className="w-3.5 h-3.5 text-purple-400" /> Gym Revenue Share (%)
+              {/* Section 3: Financials & Calculations (Lower Middle) */}
+              <div className="p-4 rounded-xl bg-emerald-950/20 border border-emerald-500/20 mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Package Price Total */}
+                  <div>
+                    <label className="block text-xs font-semibold text-emerald-300 mb-1 flex items-center justify-between">
+                      <span>Package Price Total (LKR)</span>
+                      <span className="text-[10px] text-zinc-500 font-normal">Editable</span>
                     </label>
-                    <span className="text-[10px] text-zinc-400 font-mono">
-                      Trainer gets {100 - (Number(paymentFormData.gymRevenuePercentage) || 0)}%
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 items-center">
                     <input
                       type="number"
                       required
-                      min="0"
-                      max="100"
+                      min="1"
                       step="any"
-                      value={paymentFormData.gymRevenuePercentage}
-                      onChange={(e) => setPaymentFormData({ ...paymentFormData, gymRevenuePercentage: Number(e.target.value) })}
-                      className="w-full bg-[#171424] border border-purple-500/40 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-purple-400 text-xs"
+                      value={paymentFormData.amount}
+                      onChange={(e) => {
+                        const newTotal = Number(e.target.value);
+                        setPaymentFormData({
+                          ...paymentFormData,
+                          amount: newTotal,
+                          paidAmount: newTotal,
+                        });
+                      }}
+                      className="w-full bg-[#171424] border border-emerald-500/40 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-emerald-400 text-xs"
                     />
-                    <div className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1.5 rounded-lg border border-emerald-500/30 text-center">
-                      Gym Net: LKR {Math.round(paymentFormData.amount * ((Number(paymentFormData.gymRevenuePercentage) || 0) / 100)).toLocaleString()}
-                    </div>
+                    {(() => {
+                      const calc = calculatePaymentAmount(paymentFormData.category, paymentFormData.durationMonths);
+                      if (calc.saved > 0) {
+                        return (
+                          <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 font-mono">
+                            <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
+                            <span>Saved LKR {calc.saved.toLocaleString()} ({calc.discountPercent}% OFF)</span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
-                </div>
-              )}
 
-              {/* Amount & Payment Method Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1 flex items-center justify-between">
-                    <span>Package Price (LKR)</span>
-                    <span className="text-[10px] text-zinc-500 font-normal">Editable</span>
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    step="any"
-                    value={paymentFormData.amount}
-                    onChange={(e) => {
-                      const newTotal = Number(e.target.value);
-                      setPaymentFormData({
-                        ...paymentFormData,
-                        amount: newTotal,
-                        paidAmount: newTotal,
-                      });
-                    }}
-                    className="w-full bg-[#171424] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white font-mono font-bold focus:outline-none focus:border-purple-500"
-                  />
-                  {/* Glowing Green Savings Badge */}
-                  {(() => {
-                    const calc = calculatePaymentAmount(paymentFormData.category, paymentFormData.durationMonths);
-                    if (calc.saved > 0) {
+                  {/* Amount Paid Today / Balance Due */}
+                  <div>
+                    {(() => {
+                      const totalPkgPrice = Number(paymentFormData.amount) || 0;
+                      const currentPaid = Number(paymentFormData.paidAmount ?? totalPkgPrice);
+                      const calculatedBalanceDue = Math.max(0, totalPkgPrice - currentPaid);
+
                       return (
-                        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-bold text-emerald-300 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/30 font-mono shadow-[0_0_8px_rgba(16,185,129,0.15)] animate-in fade-in duration-200">
-                          <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                          <span>✨ Saved LKR {calc.saved.toLocaleString()} ({calc.discountPercent}% OFF)</span>
+                        <div className="grid grid-cols-2 gap-2 p-2 bg-[#13111e] border border-emerald-500/30 rounded-xl">
+                          <div>
+                            <label className="block text-[11px] font-bold text-emerald-400 mb-0.5 truncate">
+                              Amount Paid Today
+                            </label>
+                            <input
+                              type="number"
+                              required
+                              min="0"
+                              max={totalPkgPrice || undefined}
+                              step="any"
+                              value={paymentFormData.paidAmount ?? totalPkgPrice}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setPaymentFormData({ ...paymentFormData, paidAmount: val });
+                              }}
+                              className="w-full bg-[#181528] border border-emerald-500/40 rounded-lg px-2.5 py-1.5 text-emerald-300 font-mono font-black focus:outline-none focus:border-emerald-400 text-xs"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-bold text-rose-400 mb-0.5 truncate">
+                              Balance Due
+                            </label>
+                            <div
+                              className={`w-full rounded-lg px-2.5 py-1.5 font-mono font-black text-xs border truncate ${
+                                calculatedBalanceDue > 0
+                                  ? "bg-rose-950/60 border-rose-500/50 text-rose-300"
+                                  : "bg-zinc-900/80 border-zinc-800 text-zinc-400"
+                              }`}
+                            >
+                              {calculatedBalanceDue > 0 ? `LKR ${calculatedBalanceDue.toLocaleString()}` : "LKR 0"}
+                            </div>
+                          </div>
                         </div>
                       );
-                    }
-                    return null;
-                  })()}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Payment Method</label>
-                  <select
-                    value={paymentFormData.method}
-                    onChange={(e) => setPaymentFormData({ ...paymentFormData, method: e.target.value as any })}
-                    className="w-full bg-[#171424] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-purple-500 text-xs"
-                  >
-                    <option value="Cash">Cash</option>
-                    <option value="Card POS">Card POS Machine</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
-                    <option value="Online">Online / PayHere</option>
-                  </select>
+                    })()}
+                  </div>
                 </div>
               </div>
 
-              {/* Partial Payment / Installment Grid */}
-              {(() => {
-                const totalPkgPrice = Number(paymentFormData.amount) || 0;
-                const currentPaid = Number(paymentFormData.paidAmount ?? totalPkgPrice);
-                const calculatedBalanceDue = Math.max(0, totalPkgPrice - currentPaid);
+              {/* Section 4: Toggles & Actions (Bottom) */}
+              <div className="p-4 rounded-xl bg-purple-950/20 border border-purple-500/20 mt-4 space-y-3">
+                {/* Include Admission Fee Checkbox */}
+                <div>
+                  <label className="flex items-center gap-2.5 cursor-pointer bg-[#171424] hover:bg-[#1e1932] p-2.5 rounded-xl border border-purple-500/30 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(paymentFormData.includeAdmissionFee)}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        const baseCalc = calculatePaymentAmount(paymentFormData.category, paymentFormData.durationMonths);
+                        const newAmount = checked ? baseCalc.finalAmount + 1500 : baseCalc.finalAmount;
+                        setPaymentFormData({
+                          ...paymentFormData,
+                          includeAdmissionFee: checked,
+                          amount: newAmount,
+                          paidAmount: newAmount,
+                        });
+                      }}
+                      className="w-4 h-4 accent-purple-500 rounded shrink-0"
+                    />
+                    <div className="flex-1 flex items-center justify-between text-xs">
+                      <span className="font-bold text-white">Include Admission Fee (+ LKR 1,500)</span>
+                      <span className="text-[10px] text-zinc-400">One-time registration fee</span>
+                    </div>
+                  </label>
+                </div>
 
-                return (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-[#13111e] border border-purple-500/30 rounded-xl">
-                    <div>
-                      <label className="block text-xs font-bold text-emerald-400 mb-1 flex items-center justify-between">
-                        <span>Amount Paid Today (LKR)</span>
-                        <span className="text-[10px] text-emerald-400/80 font-normal">Installment</span>
+                {/* Item Description (Supplements & Merchandise) */}
+                {paymentFormData.category === "Supplements & Merchandise" && (
+                  <div>
+                    <label className="block text-xs font-semibold text-pink-400 mb-1">
+                      Item Description
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Whey Protein 1kg, Creatine 300g, Gym Shaker Bottle"
+                      value={paymentFormData.itemDescription}
+                      onChange={(e) => setPaymentFormData({ ...paymentFormData, itemDescription: e.target.value })}
+                      className="w-full bg-[#171424] border border-pink-500/40 rounded-xl px-3 py-2 text-white font-medium focus:outline-none focus:border-pink-400 text-xs"
+                    />
+                  </div>
+                )}
+
+                {/* Gym Revenue Share (%) Input */}
+                {(paymentFormData.category.toLowerCase().includes("pt") || paymentFormData.category.toLowerCase().includes("personal training")) && (
+                  <div className="p-2.5 bg-purple-950/40 border border-purple-500/30 rounded-xl space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <label className="font-bold text-purple-300 flex items-center gap-1.5">
+                        <Dumbbell className="w-3.5 h-3.5 text-purple-400" /> Gym Revenue Share (%)
                       </label>
+                      <span className="text-[10px] text-zinc-400 font-mono">
+                        Trainer gets {100 - (Number(paymentFormData.gymRevenuePercentage) || 0)}%
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 items-center">
                       <input
                         type="number"
                         required
                         min="0"
-                        max={totalPkgPrice || undefined}
+                        max="100"
                         step="any"
-                        value={paymentFormData.paidAmount ?? totalPkgPrice}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          setPaymentFormData({ ...paymentFormData, paidAmount: val });
-                        }}
-                        className="w-full bg-[#181528] border border-emerald-500/40 rounded-xl px-3.5 py-2.5 text-emerald-300 font-mono font-black focus:outline-none focus:border-emerald-400 text-sm"
+                        value={paymentFormData.gymRevenuePercentage}
+                        onChange={(e) => setPaymentFormData({ ...paymentFormData, gymRevenuePercentage: Number(e.target.value) })}
+                        className="w-full bg-[#171424] border border-purple-500/40 rounded-xl px-3 py-1.5 text-white font-mono font-bold focus:outline-none focus:border-purple-400 text-xs"
                       />
-                      <p className="text-[10px] text-zinc-400 mt-1">Default: Full package price (LKR {totalPkgPrice.toLocaleString()})</p>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-rose-400 mb-1">
-                        Balance Due (LKR) [Read-Only]
-                      </label>
-                      <div
-                        className={`w-full rounded-xl px-3.5 py-2.5 font-mono font-black text-sm border ${
-                          calculatedBalanceDue > 0
-                            ? "bg-rose-950/60 border-rose-500/50 text-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.2)]"
-                            : "bg-zinc-900/80 border-zinc-800 text-zinc-400"
-                        }`}
-                      >
-                        {calculatedBalanceDue > 0 ? `LKR ${calculatedBalanceDue.toLocaleString()} (Owed)` : "LKR 0 (Fully Paid)"}
+                      <div className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1.5 rounded-lg border border-emerald-500/30 text-center">
+                        Gym Net: LKR {Math.round(paymentFormData.amount * ((Number(paymentFormData.gymRevenuePercentage) || 0) / 100)).toLocaleString()}
                       </div>
-                      <p className="text-[10px] text-zinc-400 mt-1">Calculated as: Package Price − Amount Paid</p>
                     </div>
                   </div>
-                );
-              })()}
+                )}
 
-              <div className="pt-2">
-                <label className="flex items-start gap-3 cursor-pointer bg-[#171424] hover:bg-[#1e1932] p-3.5 rounded-xl border border-purple-500/30 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={paymentFormData.sendReceiptAlert}
-                    onChange={(e) => setPaymentFormData({ ...paymentFormData, sendReceiptAlert: e.target.checked })}
-                    className="w-4 h-4 mt-0.5 accent-purple-500 rounded"
-                  />
-                  <div>
-                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <MessageCircle className="w-4 h-4 text-purple-400" /> Send Digital Receipt via Member App Chat
-                    </span>
-                    <span className="text-[11px] text-zinc-400 mt-0.5 block leading-relaxed">
-                      Instantly routes an official receipt message & invoice card directly to the member's in-app chat.
-                    </span>
-                  </div>
-                </label>
+                {/* Send Digital Receipt Checkbox */}
+                <div>
+                  <label className="flex items-center gap-2.5 cursor-pointer bg-[#171424] hover:bg-[#1e1932] p-2.5 rounded-xl border border-purple-500/30 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={paymentFormData.sendReceiptAlert}
+                      onChange={(e) => setPaymentFormData({ ...paymentFormData, sendReceiptAlert: e.target.checked })}
+                      className="w-4 h-4 accent-purple-500 rounded shrink-0"
+                    />
+                    <div className="flex-1 flex items-center justify-between text-xs">
+                      <span className="font-bold text-white flex items-center gap-1.5">
+                        <MessageCircle className="w-3.5 h-3.5 text-purple-400" /> Send Digital Receipt via Member App Chat
+                      </span>
+                      <span className="text-[10px] text-zinc-400">Instant in-app invoice</span>
+                    </div>
+                  </label>
+                </div>
               </div>
 
-
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              {/* Footer Buttons */}
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
                 <button
                   type="button"
                   onClick={() => {
                     setIsMemberComboboxOpen(false);
                     setIsRecordPaymentModalOpen(false);
                   }}
-                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs font-bold"
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs font-bold transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-white text-xs font-black shadow-lg shadow-purple-500/25"
+                  className="px-5 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-white text-xs font-black shadow-lg shadow-purple-500/25 transition-all cursor-pointer active:scale-95"
                 >
                   Save & Issue Receipt
                 </button>
@@ -9407,9 +9522,9 @@ export default function Home() {
                   <div className="max-h-60 overflow-y-auto rounded-xl border border-zinc-800 bg-[#121016] divide-y divide-zinc-800/60 p-1">
                     {assigned.length > 0 ? (
                       assigned.map((m: any) => (
-                        <div key={m.id || m.member_id} className="p-2.5 flex items-center justify-between hover:bg-zinc-800/40 transition-colors rounded-lg">
+                        <div key={m.id || m.member_id} className="p-2.5 flex items-center justify-between hover:bg-zinc-800/40 transition-colors rounded-lg gap-2">
                           <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300 font-bold text-xs">
+                            <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300 font-bold text-xs shrink-0">
                               {(m.name || m.memberName || "M").charAt(0)}
                             </div>
                             <div>
@@ -9418,13 +9533,25 @@ export default function Home() {
                             </div>
                           </div>
 
-                          <div className="text-right">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                              {m.tier || m.category || "Standard"}
-                            </span>
-                            <span className="block text-[10px] text-zinc-400 font-mono mt-0.5">
-                              Exp: {m.expiry_date || m.expiryDate || "Active"}
-                            </span>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                {m.tier || m.category || "Standard"}
+                              </span>
+                              <span className="block text-[10px] text-zinc-400 font-mono mt-0.5">
+                                Exp: {m.expiry_date || m.expiryDate || "Active"}
+                              </span>
+                            </div>
+
+                            {/* Small Remove Action Button */}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveTrainee(m.id || m.member_id, m.dbUuid || m.id)}
+                              className="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-red-500/20 text-zinc-400 hover:text-red-400 border border-zinc-700/60 hover:border-red-500/40 transition-colors shrink-0 cursor-pointer"
+                              title={`Unassign ${m.name || m.memberName} from this coach`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
                       ))
@@ -9445,7 +9572,7 @@ export default function Home() {
                   setEditingCoach(selectedViewCoach);
                   setCoachFormData({
                     name: selectedViewCoach.name,
-                    specialization: selectedViewCoach.specialization,
+                    specialization: parseSpecializationToArray(selectedViewCoach.specialization),
                     phone: selectedViewCoach.phone,
                     email: selectedViewCoach.email,
                     experience: selectedViewCoach.experience,
@@ -9476,7 +9603,7 @@ export default function Home() {
       {/* 6.5 ADD / EDIT COACH MODAL */}
       {isAddCoachModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-[#181510] border border-amber-500/40 w-full max-w-lg rounded-2xl p-6 shadow-2xl space-y-5 my-auto animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-[#181510] border border-amber-500/40 w-full max-w-5xl rounded-2xl p-6 shadow-2xl space-y-4 my-auto animate-in fade-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <UserCheck className="w-5 h-5 text-amber-400" />
@@ -9494,142 +9621,175 @@ export default function Home() {
             </div>
 
             <form onSubmit={handleCoachSubmit} className="space-y-4 text-xs sm:text-sm">
-              {/* Photo Upload & Preview Section */}
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold text-zinc-400">Coach Profile Photo (ඡායාරූපය)</label>
-                <div className="flex items-center gap-4 p-3 bg-[#0d0c09] border border-zinc-800 rounded-xl">
-                  <div className="w-16 h-16 rounded-xl overflow-hidden bg-zinc-900 border border-amber-500/30 shrink-0">
-                    {coachFormData.imageUrl ? (
-                      <img src={coachFormData.imageUrl} alt="Coach preview" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-zinc-600 font-bold text-xs">No Photo</div>
-                    )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Left Column Container */}
+                <div className="space-y-4">
+                  {/* Photo Upload & Preview Section */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-zinc-400">Coach Profile Photo</label>
+                    <div className="flex items-center gap-4 p-3 bg-[#0d0c09] border border-zinc-800 rounded-xl">
+                      <div className="w-16 h-16 rounded-xl overflow-hidden bg-zinc-900 border border-amber-500/30 shrink-0">
+                        {coachFormData.imageUrl ? (
+                          <img src={coachFormData.imageUrl} alt="Coach preview" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-zinc-600 font-bold text-xs">No Photo</div>
+                        )}
+                      </div>
+                      <div className="space-y-1.5 flex-1">
+                        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs cursor-pointer shadow">
+                          <Camera className="w-3.5 h-3.5" /> Upload Image
+                          <input type="file" accept="image/*" onChange={handleCoachImageUpload} className="hidden" />
+                        </label>
+                        <p className="text-[10px] text-zinc-500">Supports JPG, PNG, WebP (Uploaded to Supabase Storage)</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-1.5 flex-1">
-                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs cursor-pointer shadow">
-                      <Camera className="w-3.5 h-3.5" /> Upload Image
-                      <input type="file" accept="image/*" onChange={handleCoachImageUpload} className="hidden" />
+
+                  {/* Coach Full Name */}
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Coach Full Name *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Coach Nimal Jayasinghe"
+                      value={coachFormData.name}
+                      onChange={(e) => setCoachFormData({ ...coachFormData, name: e.target.value })}
+                      className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500 text-xs"
+                    />
+                  </div>
+
+                  {/* Phone & Email */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-400 mb-1">Phone Number</label>
+                      <input
+                        type="text"
+                        placeholder="0771234567"
+                        value={coachFormData.phone}
+                        onChange={(e) => setCoachFormData({ ...coachFormData, phone: e.target.value })}
+                        className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-400 mb-1">Email Address</label>
+                      <input
+                        type="email"
+                        placeholder="coach@igym.lk"
+                        value={coachFormData.email}
+                        onChange={(e) => setCoachFormData({ ...coachFormData, email: e.target.value })}
+                        className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Coach Status */}
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Coach Status</label>
+                    <select
+                      value={coachFormData.status}
+                      onChange={(e) => setCoachFormData({ ...coachFormData, status: e.target.value as "Active" | "Inactive" })}
+                      className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500 text-xs"
+                    >
+                      <option value="Active">Active (Available for Assignment)</option>
+                      <option value="Inactive">Inactive (On Leave / Unavailable)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Right Column Container */}
+                <div className="space-y-4">
+                  {/* Multi-Select Specializations */}
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1.5 flex items-center justify-between">
+                      <span>Specializations (Multi-Select) *</span>
+                      <span className="text-[10px] text-amber-400 font-mono">
+                        {Array.isArray(coachFormData.specialization) ? coachFormData.specialization.length : 0} Selected
+                      </span>
                     </label>
-                    <p className="text-[10px] text-zinc-500">Supports JPG, PNG, WebP (Uploaded to Supabase Storage)</p>
+                    <div className="flex flex-wrap gap-2 p-3 bg-[#0d0c09] border border-zinc-800 rounded-xl max-h-48 overflow-y-auto">
+                      {AVAILABLE_SPECIALIZATIONS.map((spec) => {
+                        const isSelected = Array.isArray(coachFormData.specialization) && coachFormData.specialization.includes(spec);
+                        return (
+                          <button
+                            key={spec}
+                            type="button"
+                            onClick={() => {
+                              setCoachFormData((prev) => {
+                                const current = Array.isArray(prev.specialization) ? prev.specialization : [];
+                                const updated = current.includes(spec)
+                                  ? current.filter((s) => s !== spec)
+                                  : [...current, spec];
+                                return { ...prev, specialization: updated.length > 0 ? updated : [spec] };
+                              });
+                            }}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border flex items-center gap-1.5 cursor-pointer ${
+                              isSelected
+                                ? "bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm"
+                                : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200"
+                            }`}
+                          >
+                            <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] ${isSelected ? "bg-amber-400 text-black font-black" : "border border-zinc-700"}`}>
+                              {isSelected ? "✓" : ""}
+                            </span>
+                            {spec}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Experience & Monthly Rate */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-400 mb-1">Experience (Years)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 5+ Years"
+                        value={coachFormData.experience}
+                        onChange={(e) => setCoachFormData({ ...coachFormData, experience: e.target.value })}
+                        className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-400 mb-1">Monthly PT Rate (LKR)</label>
+                      <input
+                        type="number"
+                        value={coachFormData.monthlyRate}
+                        onChange={(e) => setCoachFormData({ ...coachFormData, monthlyRate: Number(e.target.value) })}
+                        className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500 font-mono font-bold text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Bio / Description */}
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Bio / Qualifications</label>
+                    <textarea
+                      rows={3}
+                      placeholder="Short background, certification, and training philosophy..."
+                      value={coachFormData.bio}
+                      onChange={(e) => setCoachFormData({ ...coachFormData, bio: e.target.value })}
+                      className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-amber-500 text-xs"
+                    />
                   </div>
                 </div>
               </div>
 
-              {/* Coach Name & Specialization */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Coach Full Name *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Coach Nimal Jayasinghe"
-                    value={coachFormData.name}
-                    onChange={(e) => setCoachFormData({ ...coachFormData, name: e.target.value })}
-                    className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Specialization</label>
-                  <select
-                    value={coachFormData.specialization}
-                    onChange={(e) => setCoachFormData({ ...coachFormData, specialization: e.target.value })}
-                    className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
-                  >
-                    <option value="Bodybuilding & Muscle Gain">Bodybuilding & Muscle Gain</option>
-                    <option value="Fat Loss & HIIT Conditioning">Fat Loss & HIIT Conditioning</option>
-                    <option value="CrossFit & Strength Training">CrossFit & Strength Training</option>
-                    <option value="Yoga & Mobility Specialist">Yoga & Mobility Specialist</option>
-                    <option value="Powerlifting & Heavy Compound">Powerlifting & Heavy Compound</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Phone & Email */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Phone Number</label>
-                  <input
-                    type="text"
-                    placeholder="0771234567"
-                    value={coachFormData.phone}
-                    onChange={(e) => setCoachFormData({ ...coachFormData, phone: e.target.value })}
-                    className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Email Address</label>
-                  <input
-                    type="email"
-                    placeholder="coach@igym.lk"
-                    value={coachFormData.email}
-                    onChange={(e) => setCoachFormData({ ...coachFormData, email: e.target.value })}
-                    className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-              </div>
-
-              {/* Experience & Monthly Rate */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Experience (Years)</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 5+ Years"
-                    value={coachFormData.experience}
-                    onChange={(e) => setCoachFormData({ ...coachFormData, experience: e.target.value })}
-                    className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Monthly PT Rate (LKR)</label>
-                  <input
-                    type="number"
-                    value={coachFormData.monthlyRate}
-                    onChange={(e) => setCoachFormData({ ...coachFormData, monthlyRate: Number(e.target.value) })}
-                    className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500 font-mono font-bold"
-                  />
-                </div>
-              </div>
-
-              {/* Bio / Description */}
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">Bio / Qualifications</label>
-                <textarea
-                  rows={2}
-                  placeholder="Short background, certification, and training philosophy..."
-                  value={coachFormData.bio}
-                  onChange={(e) => setCoachFormData({ ...coachFormData, bio: e.target.value })}
-                  className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-amber-500 text-xs"
-                />
-              </div>
-
-              {/* Active / Inactive Status */}
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">Coach Status</label>
-                <select
-                  value={coachFormData.status}
-                  onChange={(e) => setCoachFormData({ ...coachFormData, status: e.target.value as "Active" | "Inactive" })}
-                  className="w-full bg-[#0d0c09] border border-zinc-800 rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-amber-500"
-                >
-                  <option value="Active">Active (Available for Assignment)</option>
-                  <option value="Inactive">Inactive (On Leave / Unavailable)</option>
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              {/* Footer */}
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-zinc-800">
                 <button
                   type="button"
                   onClick={() => {
                     setIsAddCoachModalOpen(false);
                     setEditingCoach(null);
                   }}
-                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs font-bold"
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs font-bold transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black text-xs font-black shadow-lg shadow-amber-500/25"
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black text-xs font-black shadow-lg shadow-amber-500/25 transition-all cursor-pointer active:scale-95"
                 >
                   {editingCoach ? "Update Coach Profile" : "Save Coach Profile"}
                 </button>
@@ -9678,7 +9838,7 @@ export default function Home() {
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
-                Sign In (ලොග් වන්න)
+                Sign In
               </button>
               <button
                 type="button"
@@ -9693,7 +9853,7 @@ export default function Home() {
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
-                Register (ලියාපදිංචි වන්න)
+                Register
               </button>
             </div>
 
@@ -9715,7 +9875,7 @@ export default function Home() {
             <form onSubmit={authMode === "signin" ? handleAuthSignIn : handleAuthSignUp} className="space-y-4 text-xs sm:text-sm">
               {authMode === "signup" && (
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Full Name (සම්පූර්ණ නම)</label>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Full Name</label>
                   <input
                     type="text"
                     required
@@ -9728,7 +9888,7 @@ export default function Home() {
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">Email Address (විද්‍යුත් තැපෑල) *</label>
+                <label className="block text-xs font-semibold text-zinc-400 mb-1">Email Address *</label>
                 <input
                   type="email"
                   required
@@ -9740,7 +9900,7 @@ export default function Home() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">Password (මුරපදය) *</label>
+                <label className="block text-xs font-semibold text-zinc-400 mb-1">Password *</label>
                 <input
                   type="password"
                   required
@@ -9753,7 +9913,7 @@ export default function Home() {
 
               {authMode === "signup" && (
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Select Access Role (තනතුර)</label>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Select Access Role</label>
                   <select
                     value={authFormData.role}
                     onChange={(e) => setAuthFormData({ ...authFormData, role: e.target.value as any })}
@@ -9972,7 +10132,7 @@ export default function Home() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white tracking-wide flex items-center gap-2">
-                    Pending & Overdue Members List (ගෙවීම් අතපසු වූ සාමාජිකයින්)
+                    Pending & Overdue Members List
                   </h3>
                   <p className="text-xs text-pink-300/80">
                     Members whose membership fee is expiring soon or overdue. Send immediate WhatsApp/SMS alerts or mark as paid.
@@ -10163,7 +10323,7 @@ export default function Home() {
             {/* Content Editor / Preview */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-zinc-300 block flex items-center justify-between">
-                <span>Customize Routine Details (විස්තර සංස්කරණය කරන්න):</span>
+                <span>Customize Routine Details:</span>
                 <span className="text-[10px] text-teal-400 font-mono">Editable</span>
               </label>
               <textarea
@@ -10273,7 +10433,7 @@ export default function Home() {
             {/* Content Editor / Preview */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-zinc-300 block">
-                Customize Diet Details (ආහාර සැලැස්ම සංස්කරණය කරන්න):
+                Customize Diet Details:
               </label>
               <textarea
                 rows={6}
@@ -10360,7 +10520,7 @@ export default function Home() {
 
             <div className="space-y-2">
               <label className="text-xs font-semibold text-zinc-300 block">
-                Reminder Message Text (මතක් කිරීමේ පණිවිඩය):
+                Reminder Message Text:
               </label>
               <textarea
                 rows={4}
@@ -10492,7 +10652,7 @@ export default function Home() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white tracking-wide flex items-center gap-2">
-                    Monthly Revenue & Income Breakdown (මසික ආදායම් විස්තරය)
+                    Monthly Revenue & Income Breakdown
                   </h3>
                   <p className="text-xs text-amber-300/80">
                     Live database breakdown of earnings, monthly trends, and payment records.
@@ -10585,7 +10745,7 @@ export default function Home() {
                   {/* Historical Monthly Income Table */}
                   <div>
                     <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4" /> Live Monthly Income Trends (පහුගිය මාසවල ආදායම)
+                      <BarChart3 className="w-4 h-4" /> Live Monthly Income Trends
                     </h4>
                     <div className="overflow-x-auto max-h-[220px] overflow-y-auto">
                       <table className="w-full text-left text-xs">
@@ -10929,7 +11089,7 @@ export default function Home() {
             <form onSubmit={handleBroadcastSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-purple-300 mb-1">
-                  Announcement Message (පණිවිඩය) *
+                  Announcement Message *
                 </label>
                 <textarea
                   rows={4}

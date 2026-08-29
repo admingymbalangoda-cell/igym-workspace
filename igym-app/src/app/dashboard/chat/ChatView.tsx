@@ -114,7 +114,7 @@ export default function ChatView() {
           schema: 'public',
           table: 'chat_messages',
         },
-        (payload) => {
+        (payload: any) => {
           const newMsgData = payload.new
           if (!newMsgData) return
 
@@ -368,7 +368,7 @@ export default function ChatView() {
           <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
             <button
               type="button"
-              className="absolute -top-10 right-0 text-white hover:text-emerald-400 text-3xl font-bold transition-colors"
+              className="absolute -top-10 right-0 text-white hover:text-red-500 text-3xl font-bold transition-colors"
               onClick={() => setPreviewImageModal(null)}
             >
               &times;
@@ -377,27 +377,27 @@ export default function ChatView() {
             <img
               src={previewImageModal}
               alt="Full size attachment"
-              className="max-w-full max-h-[85vh] object-contain rounded-2xl border border-white/10 shadow-2xl"
+              className="max-w-full max-h-[85vh] object-contain rounded-2xl border border-zinc-800 shadow-2xl"
             />
           </div>
         </div>
       )}
 
       {/* ── Chat Channel Banner Header ───────────────────────────────────── */}
-      <div className="bg-[#1c1c1e] border border-white/10 rounded-2xl p-4 md:p-5 flex items-center justify-between shadow-2xl mb-4">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 md:p-5 flex items-center justify-between shadow-2xl mb-4">
         <div className="flex items-center gap-3.5">
           <div className="flex -space-x-3">
-            <span className="w-10 h-10 rounded-full bg-emerald-500 text-zinc-950 font-bold flex items-center justify-center text-xs border-2 border-[#1c1c1e] shadow-md">
+            <span className="w-10 h-10 rounded-full bg-red-600 text-white font-bold flex items-center justify-center text-xs border-2 border-zinc-900 shadow-md">
               GS
             </span>
-            <span className="w-10 h-10 rounded-full bg-cyan-500 text-zinc-950 font-bold flex items-center justify-center text-xs border-2 border-[#1c1c1e] shadow-md">
+            <span className="w-10 h-10 rounded-full bg-zinc-800 text-gray-200 font-bold flex items-center justify-center text-xs border-2 border-zinc-900 shadow-md">
               AD
             </span>
           </div>
           <div>
             <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">Member Support &amp; Gym Admin</h2>
             <p className="text-xs text-gray-400 flex items-center gap-1.5 mt-0.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
               Online &bull; Live Desk &amp; Trainer Sync
             </p>
           </div>
@@ -405,16 +405,16 @@ export default function ChatView() {
       </div>
 
       {/* ── Messages Feed Area ───────────────────────────────────────────── */}
-      <div className="flex-1 bg-[#1c1c1e] border border-white/10 rounded-2xl p-4 md:p-6 overflow-y-auto shadow-2xl flex flex-col gap-4">
+      <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 md:p-6 overflow-y-auto shadow-2xl flex flex-col gap-4">
         <div className="text-center my-1">
-          <span className="text-[11px] font-mono text-gray-400 bg-zinc-900/80 px-3 py-1 rounded-full border border-white/5">
+          <span className="text-[11px] font-mono text-gray-400 bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
             Live Conversation History
           </span>
         </div>
 
         {loading ? (
           <div className="flex flex-col items-center justify-center my-auto p-12 text-gray-400">
-            <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3" />
+            <div className="w-8 h-8 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-3" />
             <p className="text-xs">Loading message history...</p>
           </div>
         ) : messages.length === 0 ? (
@@ -447,7 +447,7 @@ export default function ChatView() {
               >
                 {/* Avatar for Incoming Support / Admin Messages (Left Side Only) */}
                 {!isUser && (
-                  <div className="w-8 h-8 rounded-full bg-cyan-600 text-white text-xs font-bold flex items-center justify-center shrink-0 border border-cyan-400/40 shadow">
+                  <div className="w-8 h-8 rounded-full bg-zinc-800 text-gray-200 text-xs font-bold flex items-center justify-center shrink-0 border border-zinc-700 shadow">
                     AD
                   </div>
                 )}
@@ -455,7 +455,7 @@ export default function ChatView() {
                 <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
                   {/* Sender Name Label */}
                   {!isUser && (
-                    <span className="text-[11px] font-semibold text-cyan-400 mb-1 ml-1">
+                    <span className="text-[11px] font-semibold text-zinc-400 mb-1 ml-1">
                       iGYM Admin &amp; Support
                     </span>
                   )}
@@ -464,13 +464,13 @@ export default function ChatView() {
                   <div
                     className={`p-3.5 sm:p-4 rounded-2xl shadow-xl transition-all ${
                       isUser
-                        ? 'bg-emerald-500 text-zinc-950 font-medium rounded-tr-xs'
-                        : 'bg-[#2c2c2e] text-white border border-white/10 rounded-tl-xs'
+                        ? 'bg-zinc-800 text-zinc-100 border border-zinc-700/80 rounded-tr-xs'
+                        : 'bg-zinc-900 text-zinc-200 border border-zinc-800 rounded-tl-xs'
                     }`}
                   >
                     {/* Text Message Content rendered inside div */}
                     {displayMsgText && (
-                      <div className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed">
+                      <div className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed text-zinc-200">
                         {displayMsgText}
                       </div>
                     )}
@@ -478,7 +478,7 @@ export default function ChatView() {
                     {/* Image Attachment Thumbnail */}
                     {imageUrl && (
                       <div
-                        className="mt-2 rounded-xl overflow-hidden cursor-pointer border border-black/20 hover:opacity-90 transition-opacity"
+                        className="mt-2 rounded-xl overflow-hidden cursor-pointer border border-zinc-800 bg-zinc-950/50 hover:opacity-90 transition-opacity"
                         onClick={() => setPreviewImageModal(imageUrl!)}
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -492,13 +492,13 @@ export default function ChatView() {
 
                     {/* Time & Read Status Footer */}
                     <div
-                      className={`flex items-center gap-1.5 mt-1.5 text-[10px] ${
-                        isUser ? 'text-zinc-800 justify-end font-semibold' : 'text-gray-400 justify-start'
+                      className={`flex items-center gap-1.5 mt-1.5 text-[10px] text-zinc-400 ${
+                        isUser ? 'justify-end font-medium' : 'justify-start'
                       }`}
                     >
                       <span>{formatChatTime(msg.created_at)}</span>
                       {isUser && (
-                        <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20">
+                        <svg className="w-3 h-3 fill-zinc-400" viewBox="0 0 20 20">
                           <path
                             fillRule="evenodd"
                             d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
@@ -518,7 +518,7 @@ export default function ChatView() {
 
       {/* ── Message Input Bar ─────────────────────────────────────────────── */}
       <form onSubmit={handleSend} className="mt-4 flex gap-2.5 items-center">
-        <div className="flex-1 bg-[#1c1c1e] border border-white/10 rounded-2xl flex items-center px-4 py-2.5 shadow-2xl focus-within:border-emerald-500/80 transition-all">
+        <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center px-4 py-2.5 shadow-2xl focus-within:border-red-500/80 transition-all">
           <input
             type="text"
             className="w-full bg-transparent text-white text-xs sm:text-sm focus:outline-none placeholder-gray-500"
@@ -531,13 +531,13 @@ export default function ChatView() {
           {/* Attachment / Image Upload Button */}
           <button
             type="button"
-            className="p-2 text-gray-400 hover:text-emerald-400 transition-colors rounded-xl hover:bg-zinc-800/80 shrink-0"
+            className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-xl hover:bg-zinc-800 shrink-0"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploadingImage || sending}
             title="Attach Image"
           >
             {uploadingImage ? (
-              <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
             ) : (
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -549,7 +549,7 @@ export default function ChatView() {
         {/* Send Button */}
         <button
           type="submit"
-          className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold p-3 sm:px-5 sm:py-3 rounded-2xl transition-all shadow-xl hover:shadow-emerald-500/25 flex items-center justify-center shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="bg-red-600 hover:bg-red-700 text-white font-bold p-3 sm:px-5 sm:py-3 rounded-2xl transition-all shadow-xl hover:shadow-red-600/25 flex items-center justify-center shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={(!inputText.trim() && !uploadingImage) || sending}
         >
           <svg className="w-5 h-5 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2.5">

@@ -106,25 +106,25 @@ export default function RecordExpenseModal({
           className="space-y-4 text-xs sm:text-sm"
         >
           <div>
-            <label className="block text-xs font-semibold text-zinc-300 mb-1">Expense Category (වියදම් වර්ගය) *</label>
+            <label className="block text-xs font-semibold text-zinc-300 mb-1">Expense Category *</label>
             <select
               value={expenseFormData.category}
               onChange={(e) => setExpenseFormData({ ...expenseFormData, category: e.target.value as any })}
               className="w-full bg-[#17121e] border border-zinc-700 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-rose-500 text-xs"
             >
-              <option value="Electricity & Utility Bills">Electricity & Utility Bills (ලයිට් / වතුර බිල්)</option>
-              <option value="Equipment & Maintenance">Equipment & Maintenance (යන්ත්‍ර අලුත්වැඩියා)</option>
-              <option value="Staff Salaries & Wages">Staff Salaries & Wages (කාර්ය මණ්ඩල වේතන)</option>
-              <option value="Rent & Property">Rent & Property (ගොඩනැගිලි කුලිය)</option>
-              <option value="Supplements Stock">Supplements Stock (සප්ලිමන්ට් මිලදී ගැනීම්)</option>
-              <option value="Marketing & Ads">Marketing & Ads (දැන්වීම් හා ප්‍රචාරණ)</option>
-              <option value="Other">Other Miscellaneous Expenses (වෙනත්)</option>
+              <option value="Electricity & Utility Bills">Electricity & Utility Bills</option>
+              <option value="Equipment & Maintenance">Equipment & Maintenance</option>
+              <option value="Staff Salaries & Wages">Staff Salaries & Wages</option>
+              <option value="Rent & Property">Rent & Property</option>
+              <option value="Supplements Stock">Supplements Stock</option>
+              <option value="Marketing & Ads">Marketing & Ads</option>
+              <option value="Other">Other Miscellaneous Expenses</option>
             </select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-zinc-300 mb-1">Amount in LKR (ගණන) *</label>
+              <label className="block text-xs font-semibold text-zinc-300 mb-1">Amount in LKR *</label>
               <input
                 type="number"
                 required
@@ -136,7 +136,7 @@ export default function RecordExpenseModal({
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-zinc-300 mb-1">Date (දිනය)</label>
+              <label className="block text-xs font-semibold text-zinc-300 mb-1">Date</label>
               <input
                 type="date"
                 required
@@ -148,7 +148,7 @@ export default function RecordExpenseModal({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-zinc-300 mb-1">Description / Note (විස්තරය)</label>
+            <label className="block text-xs font-semibold text-zinc-300 mb-1">Description / Note</label>
             <input
               type="text"
               placeholder="e.g. Monthly Electricity Bill payment or pulley replacement"

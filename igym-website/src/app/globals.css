@@ -2,13 +2,13 @@
 
 @layer base {
   :root {
-    --background: #0b0f17;
+    --background: #09090b;
     --foreground: #f8fafc;
-    --card: #131926;
-    --card-border: rgba(255, 255, 255, 0.08);
-    --primary: #00f2fe;
-    --primary-gradient: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
-    --accent-orange: #ff5e3a;
+    --card: #18181b;
+    --card-border: rgba(255, 255, 255, 0.1);
+    --primary: #ef4444;
+    --primary-gradient: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    --accent-orange: #ef4444;
   }
 
   html {
@@ -27,33 +27,33 @@
 
 /* Glassmorphism utilities */
 .glass-panel {
-  background: rgba(19, 25, 38, 0.65);
+  background: rgba(24, 24, 27, 0.85);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .glass-card {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+  background: linear-gradient(145deg, rgba(39, 39, 42, 0.6) 0%, rgba(24, 24, 27, 0.4) 100%);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .glass-card:hover {
-  border-color: rgba(0, 242, 254, 0.4);
+  border-color: rgba(239, 68, 68, 0.5);
   transform: translateY(-4px);
-  box-shadow: 0 12px 30px -10px rgba(0, 242, 254, 0.15);
+  box-shadow: 0 12px 30px -10px rgba(239, 68, 68, 0.3);
 }
 
 .text-gradient {
-  background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+  background: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
 .text-gradient-orange {
-  background: linear-gradient(135deg, #ff5e3a 0%, #ff9500 100%);
+  background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -65,7 +65,7 @@
   content: '';
   position: absolute;
   inset: -1px;
-  background: linear-gradient(135deg, rgba(0, 242, 254, 0.5), rgba(79, 172, 254, 0.2));
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.5), rgba(220, 38, 38, 0.2));
   border-radius: inherit;
   z-index: -1;
   opacity: 0;
@@ -80,14 +80,14 @@
   width: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #0b0f17;
+  background: #09090b;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: #27272a;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #00f2fe;
+  background: #ef4444;
 }
 
 /* Scrollbar None for mobile touch scroll */

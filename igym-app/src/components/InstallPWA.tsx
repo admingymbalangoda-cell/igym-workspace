@@ -73,12 +73,12 @@ export default function InstallPWA() {
     <>
       {/* Floating Bottom PWA Install Banner */}
       {showBanner && !showIOSModal && (
-        <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:right-6 sm:w-96 z-[9999] bg-[#0d101a]/95 border border-emerald-500/40 backdrop-blur-xl rounded-2xl p-4 shadow-2xl shadow-emerald-950/50 animate-in slide-in-from-bottom-5 duration-300">
+        <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:right-6 sm:w-96 z-[9999] bg-zinc-900/95 border border-red-600/40 backdrop-blur-xl rounded-2xl p-4 shadow-2xl shadow-red-950/30 animate-in slide-in-from-bottom-5 duration-300">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-0.5 shrink-0 shadow-lg shadow-emerald-500/20">
-                <div className="w-full h-full bg-[#0d101a] rounded-[10px] flex items-center justify-center">
-                  <Dumbbell className="w-5 h-5 text-emerald-400 transform -rotate-12" />
+              <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-red-600 to-red-500 p-0.5 shrink-0 shadow-lg shadow-red-600/20">
+                <div className="w-full h-full bg-zinc-950 rounded-[10px] flex items-center justify-center">
+                  <Dumbbell className="w-5 h-5 text-red-500 transform -rotate-12" />
                 </div>
               </div>
 
@@ -101,16 +101,16 @@ export default function InstallPWA() {
             </button>
           </div>
 
-          <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-zinc-800/80">
+          <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-zinc-800">
             <button
               onClick={handleDismiss}
-              className="flex-1 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition-all text-center"
+              className="flex-1 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition-all text-center"
             >
               Not now
             </button>
             <button
               onClick={handleInstallClick}
-              className="flex-1 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-extrabold text-xs shadow-md shadow-emerald-500/20 transition-all flex items-center justify-center gap-1.5"
+              className="flex-1 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs shadow-md shadow-red-600/20 transition-all flex items-center justify-center gap-1.5"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Install App</span>
@@ -122,10 +122,10 @@ export default function InstallPWA() {
       {/* iOS Safari Instructions Modal */}
       {showIOSModal && (
         <div className="fixed inset-0 z-[99999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0d101a] border border-emerald-500/50 w-full max-w-sm rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200 text-center">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-0.5 shadow-lg shadow-emerald-500/30">
-              <div className="w-full h-full bg-[#0d101a] rounded-[14px] flex items-center justify-center">
-                <Dumbbell className="w-7 h-7 text-emerald-400 transform -rotate-12" />
+          <div className="bg-zinc-950 border border-red-600/50 w-full max-w-sm rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200 text-center">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-red-600 to-red-500 p-0.5 shadow-lg shadow-red-600/30">
+              <div className="w-full h-full bg-zinc-950 rounded-[14px] flex items-center justify-center">
+                <Dumbbell className="w-7 h-7 text-red-500 transform -rotate-12" />
               </div>
             </div>
 
@@ -136,27 +136,27 @@ export default function InstallPWA() {
               </p>
             </div>
 
-            <div className="bg-[#141824] border border-zinc-800 rounded-xl p-3.5 space-y-3 text-left text-xs font-medium text-zinc-300">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3.5 space-y-3 text-left text-xs font-medium text-zinc-300">
               <div className="flex items-center gap-2.5">
-                <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-mono text-xs font-bold flex items-center justify-center shrink-0">
+                <span className="w-6 h-6 rounded-full bg-red-500/20 text-red-500 font-mono text-xs font-bold flex items-center justify-center shrink-0">
                   1
                 </span>
                 <span className="flex items-center gap-1.5">
-                  Tap the <Share className="w-4 h-4 text-emerald-400 inline" /> <strong>Share</strong> icon in Safari toolbar.
+                  Tap the <Share className="w-4 h-4 text-red-500 inline" /> <strong>Share</strong> icon in Safari toolbar.
                 </span>
               </div>
 
               <div className="flex items-center gap-2.5">
-                <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-mono text-xs font-bold flex items-center justify-center shrink-0">
+                <span className="w-6 h-6 rounded-full bg-red-500/20 text-red-500 font-mono text-xs font-bold flex items-center justify-center shrink-0">
                   2
                 </span>
                 <span className="flex items-center gap-1.5">
-                  Scroll down and tap <PlusSquare className="w-4 h-4 text-emerald-400 inline" /> <strong>Add to Home Screen</strong>.
+                  Scroll down and tap <PlusSquare className="w-4 h-4 text-red-500 inline" /> <strong>Add to Home Screen</strong>.
                 </span>
               </div>
 
               <div className="flex items-center gap-2.5">
-                <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-mono text-xs font-bold flex items-center justify-center shrink-0">
+                <span className="w-6 h-6 rounded-full bg-red-500/20 text-red-500 font-mono text-xs font-bold flex items-center justify-center shrink-0">
                   3
                 </span>
                 <span>
@@ -167,7 +167,7 @@ export default function InstallPWA() {
 
             <button
               onClick={handleDismiss}
-              className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs shadow-md shadow-emerald-500/20 transition-all"
+              className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs shadow-md shadow-red-600/20 transition-all"
             >
               Got it!
             </button>

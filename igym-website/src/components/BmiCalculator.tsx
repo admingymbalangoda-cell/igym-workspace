@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Calculator, Flame, Scale, Activity, RefreshCw } from "lucide-react";
+import { Calculator } from "lucide-react";
 
 export default function BmiCalculator() {
   const [weight, setWeight] = useState<number>(70);
@@ -55,12 +55,12 @@ export default function BmiCalculator() {
   const calories = calculateBmr();
 
   return (
-    <section id="calculator" className="py-24 relative bg-[#0d131f] border-y border-white/10">
+    <section id="calculator" className="py-24 relative bg-zinc-950 border-y border-zinc-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           {/* Info Side */}
           <div className="lg:col-span-5 space-y-6">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-[#00f2fe]/10 text-[#00f2fe] text-xs font-bold uppercase tracking-wider">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-red-500/10 border border-red-500/30 text-red-500 text-xs font-bold uppercase tracking-wider shadow-sm shadow-red-500/10">
               <Calculator className="w-4 h-4" />
               SMART FITNESS METRICS
             </div>
@@ -71,7 +71,7 @@ export default function BmiCalculator() {
               Understand your starting point. Use our interactive fitness calculator to instantly determine your Body Mass Index (BMI) and recommended daily calorie intake for body transformation.
             </p>
 
-            <div className="glass-card p-5 rounded-xl border border-white/10 space-y-3">
+            <div className="glass-card p-5 rounded-xl border border-zinc-800 space-y-3 shadow-md">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-slate-400">BMI &lt; 18.5</span>
                 <span className="text-amber-400 font-semibold">Underweight</span>
@@ -92,7 +92,7 @@ export default function BmiCalculator() {
           </div>
 
           {/* Calculator Card */}
-          <div className="lg:col-span-7 glass-panel p-6 sm:p-8 rounded-3xl border border-white/15 shadow-2xl relative">
+          <div className="lg:col-span-7 glass-panel p-6 sm:p-8 rounded-3xl border border-zinc-800 shadow-2xl relative bg-zinc-900/80">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
               {/* Gender */}
               <div>
@@ -103,8 +103,8 @@ export default function BmiCalculator() {
                     onClick={() => setGender("male")}
                     className={`py-2.5 rounded-lg text-sm font-semibold transition-all ${
                       gender === "male"
-                        ? "bg-[#00f2fe] text-slate-950 shadow-md shadow-[#00f2fe]/20"
-                        : "glass-card text-slate-300 hover:text-white"
+                        ? "bg-red-600 text-white shadow-lg shadow-red-600/30"
+                        : "glass-card text-slate-300 hover:text-white border border-zinc-800"
                     }`}
                   >
                     Male
@@ -114,8 +114,8 @@ export default function BmiCalculator() {
                     onClick={() => setGender("female")}
                     className={`py-2.5 rounded-lg text-sm font-semibold transition-all ${
                       gender === "female"
-                        ? "bg-[#00f2fe] text-slate-950 shadow-md shadow-[#00f2fe]/20"
-                        : "glass-card text-slate-300 hover:text-white"
+                        ? "bg-red-600 text-white shadow-lg shadow-red-600/30"
+                        : "glass-card text-slate-300 hover:text-white border border-zinc-800"
                     }`}
                   >
                     Female
@@ -132,7 +132,7 @@ export default function BmiCalculator() {
                   max="80"
                   value={age}
                   onChange={(e) => setAge(Number(e.target.value))}
-                  className="w-full accent-[#00f2fe] cursor-pointer mt-2"
+                  className="w-full accent-red-500 cursor-pointer mt-2"
                 />
               </div>
 
@@ -140,13 +140,13 @@ export default function BmiCalculator() {
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">Height (cm)</label>
-                  <span className="text-sm font-bold text-[#00f2fe]">{height} cm</span>
+                  <span className="text-sm font-bold text-red-500">{height} cm</span>
                 </div>
                 <input
                   type="number"
                   value={height}
                   onChange={(e) => setHeight(Number(e.target.value))}
-                  className="w-full bg-slate-900/90 border border-white/15 rounded-lg px-4 py-2.5 text-white font-semibold focus:outline-none focus:border-[#00f2fe]"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-white font-semibold focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
                 />
               </div>
 
@@ -154,13 +154,13 @@ export default function BmiCalculator() {
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">Weight (kg)</label>
-                  <span className="text-sm font-bold text-[#00f2fe]">{weight} kg</span>
+                  <span className="text-sm font-bold text-red-500">{weight} kg</span>
                 </div>
                 <input
                   type="number"
                   value={weight}
                   onChange={(e) => setWeight(Number(e.target.value))}
-                  className="w-full bg-slate-900/90 border border-white/15 rounded-lg px-4 py-2.5 text-white font-semibold focus:outline-none focus:border-[#00f2fe]"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-white font-semibold focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
                 />
               </div>
             </div>
@@ -171,7 +171,7 @@ export default function BmiCalculator() {
               <select
                 value={activity}
                 onChange={(e) => setActivity(Number(e.target.value))}
-                className="w-full bg-slate-900/90 border border-white/15 rounded-lg px-4 py-2.5 text-white font-semibold focus:outline-none focus:border-[#00f2fe]"
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-white font-semibold focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
               >
                 <option value={1.2}>Sedentary (Little or no workout)</option>
                 <option value={1.375}>Lightly Active (1-3 days/week)</option>
@@ -181,9 +181,9 @@ export default function BmiCalculator() {
             </div>
 
             {/* Results Grid */}
-            <div className="bg-slate-950/80 rounded-2xl p-6 border border-white/10 grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div className="bg-zinc-950/90 rounded-2xl p-6 border border-zinc-800 grid grid-cols-1 sm:grid-cols-2 gap-6 shadow-inner">
               {/* BMI Card */}
-              <div className="text-center sm:text-left sm:border-r border-white/10 sm:pr-6">
+              <div className="text-center sm:text-left sm:border-r border-zinc-800 sm:pr-6">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Your BMI</p>
                 <div className="flex items-baseline justify-center sm:justify-start gap-3">
                   <span className="text-4xl font-black text-white">{res.bmi}</span>
@@ -196,7 +196,7 @@ export default function BmiCalculator() {
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Estimated Daily Intake</p>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-300">Maintain Weight:</span>
-                  <span className="font-bold text-[#00f2fe]">{calories.tdee} kcal</span>
+                  <span className="font-bold text-red-500">{calories.tdee} kcal</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-300">Fat Loss (Cut):</span>

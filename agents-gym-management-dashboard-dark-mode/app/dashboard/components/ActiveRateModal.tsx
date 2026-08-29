@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import { Search, Send, TrendingUp, X, Zap } from "lucide-react";
+import { RefreshCw, Search, Send, TrendingUp, X, Zap } from "lucide-react";
 
+import { supabase } from "@/lib/supabase";
 import { Member } from "@/app/dashboard/page";
 
 interface ActiveRateModalProps {
@@ -24,8 +25,36 @@ export default function ActiveRateModal({
 }: ActiveRateModalProps) {
   const [activeRateSearchQuery, setActiveRateSearchQuery] = useState("");
   const [activeRateTabFilter, setActiveRateTabFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+  const [sendingReminderId, setSendingReminderId] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleSendReminder = async (mem: Member) => {
+    setSendingReminderId(mem.id);
+    try {
+      const reminderText = `Hello ${mem.name || "Member"}, this is an automated reminder that your gym membership is expiring/has expired. Please renew at the front desk. Thank you!`;
+      const { error } = await supabase.from("chat_messages").insert([
+        {
+          member_id: mem.id,
+          sender_id: "admin",
+          receiver_id: mem.id,
+          message: reminderText,
+        },
+      ]);
+
+      if (error) {
+        console.error("⚠️ Failed to send in-app renewal reminder:", error.message);
+        alert(`⚠️ Could not send in-app reminder: ${error.message}`);
+      } else {
+        alert(`In-app reminder sent to ${mem.name}!`);
+      }
+    } catch (err: any) {
+      console.error("⚠️ Exception sending in-app reminder:", err);
+      alert(`⚠️ Error sending reminder: ${err?.message || err}`);
+    } finally {
+      setSendingReminderId(null);
+    }
+  };
 
   const checkIsMemberExpired = (m: any): boolean => {
     const statusLower = (m.status || "").toString().trim().toLowerCase();
@@ -52,12 +81,14 @@ export default function ActiveRateModal({
       if (activeRateTabFilter === "INACTIVE") return isExpired;
       return true;
     })
-    .filter(
-      (m) =>
-        m.name.toLowerCase().includes(activeRateSearchQuery.toLowerCase()) ||
-        m.phone.includes(activeRateSearchQuery) ||
-        m.id.toLowerCase().includes(activeRateSearchQuery.toLowerCase())
-    );
+    .filter((m) => {
+      const q = activeRateSearchQuery.trim().toLowerCase();
+      if (!q) return true;
+      const fullName = (m.name || (m as any).full_name || "").toLowerCase();
+      const memberId = (m.id || (m as any).member_id || "").toLowerCase();
+      const phone = (m.phone || "").toLowerCase();
+      return fullName.includes(q) || memberId.includes(q) || phone.includes(q);
+    });
 
   const currentInactiveMembers = currentFilteredMembers.filter((m) => checkIsMemberExpired(m));
   const allCurrentInactiveSelected =
@@ -74,9 +105,26 @@ export default function ActiveRateModal({
     }
   };
 
+  const getPackageColorClasses = (tier?: string | null) => {
+    const t = (tier || "").toLowerCase();
+    if (t.includes("men")) {
+      return "bg-blue-500/15 text-blue-300 border-blue-500/40";
+    }
+    if (t.includes("ladies") || t.includes("women")) {
+      return "bg-pink-500/15 text-pink-300 border-pink-500/40";
+    }
+    if (t.includes("student")) {
+      return "bg-yellow-500/15 text-yellow-300 border-yellow-500/40";
+    }
+    if (t.includes("couple") || t.includes("family")) {
+      return "bg-purple-500/15 text-purple-300 border-purple-500/40";
+    }
+    return "bg-emerald-500/15 text-emerald-300 border-emerald-500/40";
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <div className="bg-[#150f14] border border-pink-500/40 w-full max-w-4xl rounded-2xl p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-[#150f14] border border-pink-500/40 w-full max-w-6xl rounded-2xl p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
         {/* Modal Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
           <div className="flex items-center gap-3">
@@ -85,7 +133,7 @@ export default function ActiveRateModal({
             </div>
             <div>
               <h3 className="text-lg font-bold text-white tracking-wide flex items-center gap-2">
-                Active vs Inactive Rate Analysis (සක්‍රීය සහ අක්‍රීය සාමාජික විස්තරය)
+                Active vs Inactive Rate Analysis
               </h3>
               <p className="text-xs text-pink-300/80">
                 Comprehensive status breakdown of all gym members and one-click renewal reminders.
@@ -97,8 +145,8 @@ export default function ActiveRateModal({
           </button>
         </div>
 
-        {/* Filter Tabs, Search & Bulk Activate Controls */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        {/* Sticky Filter Tabs, Search & Bulk Activate Controls */}
+        <div className="sticky top-0 z-20 bg-[#150f14] py-2 border-b border-zinc-800/60 flex flex-col md:flex-row md:items-center justify-between gap-3">
           {/* Tabs */}
           <div className="flex items-center gap-2 bg-[#1d121b] p-1 rounded-xl border border-zinc-800 flex-wrap">
             <button
@@ -138,15 +186,15 @@ export default function ActiveRateModal({
               <Zap className="w-3.5 h-3.5 fill-black" /> Bulk Activate Selected ({selectedBulkInactiveMemberIds.length})
             </button>
 
-            {/* Search */}
-            <div className="relative w-full sm:w-48">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-pink-400" />
+            {/* Sticky Search Bar */}
+            <div className="relative w-full sm:w-56">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
               <input
                 type="text"
-                placeholder="Search member..."
+                placeholder="Search active members..."
                 value={activeRateSearchQuery}
                 onChange={(e) => setActiveRateSearchQuery(e.target.value)}
-                className="w-full bg-[#1d121b] border border-pink-500/30 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-pink-400"
+                className="w-full bg-[#1d121b] border border-pink-500/30 rounded-xl pl-10 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-pink-400 font-medium"
               />
             </div>
           </div>
@@ -156,7 +204,7 @@ export default function ActiveRateModal({
         <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
           <table className="w-full text-left text-xs sm:text-sm">
             <thead>
-              <tr className="text-[11px] font-bold text-pink-400 uppercase tracking-wider border-b border-zinc-800 sticky top-0 bg-[#150f14]">
+              <tr className="text-[11px] font-bold text-slate-400 uppercase tracking-wider border-b border-zinc-800 sticky top-0 bg-[#150f14]">
                 <th className="pb-3 pl-2 w-10 text-center">
                   <input
                     type="checkbox"
@@ -169,10 +217,10 @@ export default function ActiveRateModal({
                 </th>
                 <th className="pb-3 pl-2">MEMBER & PHONE</th>
                 <th className="pb-3">CATEGORY</th>
-                <th className="pb-3">JOINED DATE</th>
-                <th className="pb-3">EXPIRE DATE</th>
-                <th className="pb-3">STATUS</th>
-                <th className="pb-3 pr-2 text-right">ACTION</th>
+                <th className="pb-3 whitespace-nowrap">JOINED DATE</th>
+                <th className="pb-3 whitespace-nowrap">EXPIRE DATE</th>
+                <th className="pb-3 whitespace-nowrap">STATUS</th>
+                <th className="pb-3 pr-2 text-right whitespace-nowrap">ACTION</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
@@ -205,15 +253,15 @@ export default function ActiveRateModal({
                       <span className="text-[10px] text-zinc-400 font-mono">{mem.phone}</span>
                     </td>
                     <td className="py-3 text-xs">
-                      <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-semibold border border-zinc-700 text-[10px]">
-                        {mem.tier}
+                      <span className={`px-2.5 py-1 rounded font-bold border text-[10px] ${getPackageColorClasses(mem.tier)}`}>
+                        {mem.tier || "Standard"}
                       </span>
                     </td>
-                    <td className="py-3 font-mono text-zinc-400 text-xs">{mem.joinDate}</td>
-                    <td className="py-3 font-mono text-xs text-pink-300 font-semibold">
+                    <td className="py-3 font-mono text-zinc-400 text-xs whitespace-nowrap">{mem.joinDate}</td>
+                    <td className="py-3 font-mono text-xs text-pink-300 font-semibold whitespace-nowrap">
                       {mem.expiryDate ? mem.expiryDate : "N/A"}
                     </td>
-                    <td className="py-3 text-xs">
+                    <td className="py-3 text-xs whitespace-nowrap">
                       <span
                         className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${
                           !isExpired
@@ -224,15 +272,22 @@ export default function ActiveRateModal({
                         {!isExpired ? "Active 🟢" : "Inactive/Expired 🔴"}
                       </span>
                     </td>
-                    <td className="py-3 pr-2 text-right">
+                    <td className="py-3 pr-2 text-right whitespace-nowrap">
                       {isExpired ? (
                         <button
-                          onClick={() => {
-                            alert(`WhatsApp renewal reminder sent to ${mem.name} (${mem.phone})!`);
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-pink-500/20 hover:bg-pink-500/30 text-pink-300 border border-pink-500/40 text-[11px] font-bold transition-all flex items-center gap-1 ml-auto cursor-pointer"
+                          onClick={() => handleSendReminder(mem)}
+                          disabled={sendingReminderId === mem.id}
+                          className="px-4 py-1.5 rounded-lg bg-pink-500/20 hover:bg-pink-500/30 text-pink-300 border border-pink-500/40 text-xs font-bold transition-all flex items-center gap-1.5 ml-auto cursor-pointer whitespace-nowrap disabled:opacity-50"
                         >
-                          <Send className="w-3 h-3" /> Remind Renew
+                          {sendingReminderId === mem.id ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Sending...
+                            </>
+                          ) : (
+                            <>
+                              <Send className="w-3.5 h-3.5" /> Remind Renew
+                            </>
+                          )}
                         </button>
                       ) : (
                         <span className="text-[10px] text-zinc-500 font-mono">Up to date</span>

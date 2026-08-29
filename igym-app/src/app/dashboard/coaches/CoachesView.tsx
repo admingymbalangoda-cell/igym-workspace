@@ -258,14 +258,14 @@ export default function CoachesView() {
     <div className="flex flex-col gap-8 p-6 md:p-8 w-full max-w-7xl mx-auto">
       {/* ── Toast Notification ────────────────────────────────────────────── */}
       {toastMessage && (
-        <div className="fixed top-6 right-6 z-50 bg-emerald-500/90 text-white px-5 py-3 rounded-2xl font-medium shadow-2xl flex items-center gap-3 text-sm border border-emerald-400/40 backdrop-blur-md">
+        <div className="fixed top-6 right-6 z-50 bg-red-600/90 text-white px-5 py-3 rounded-2xl font-medium shadow-2xl flex items-center gap-3 text-sm border border-red-500/40 backdrop-blur-md">
           <span className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
           <span>{toastMessage}</span>
         </div>
       )}
 
       {/* ── Header & Title ────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-6">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Certified Personal Coaches</h1>
           <p className="text-xs sm:text-sm text-gray-400 mt-1">
@@ -284,8 +284,8 @@ export default function CoachesView() {
               type="button"
               className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 shrink-0 border ${
                 isActive
-                  ? 'bg-emerald-500 text-zinc-950 border-emerald-400 shadow-lg shadow-emerald-500/20'
-                  : 'bg-[#1c1c1e] text-gray-300 border-white/10 hover:border-white/20 hover:text-white'
+                  ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-600/20'
+                  : 'bg-zinc-900 text-gray-300 border-zinc-800 hover:border-zinc-700 hover:text-white'
               }`}
               onClick={() => setSelectedSpecialty(category)}
               role="tab"
@@ -299,13 +299,13 @@ export default function CoachesView() {
 
       {/* ── Content Body (Loading, Empty State, or Responsive Grid) ──────── */}
       {loading ? (
-        <div className="flex flex-col items-center justify-center p-16 bg-[#1c1c1e] border border-white/10 rounded-2xl text-center shadow-xl my-4">
-          <div className="w-9 h-9 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <div className="flex flex-col items-center justify-center p-16 bg-zinc-900 border border-zinc-800 rounded-2xl text-center shadow-xl my-4">
+          <div className="w-9 h-9 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4" />
           <p className="text-sm font-medium text-gray-300">Loading coaches from database...</p>
         </div>
       ) : filteredCoaches.length === 0 ? (
-        <div className="flex flex-col items-center justify-center p-16 bg-[#1c1c1e] border border-white/10 rounded-2xl text-center shadow-xl my-4">
-          <div className="w-12 h-12 rounded-full bg-gray-800/80 flex items-center justify-center text-gray-400 mb-3">
+        <div className="flex flex-col items-center justify-center p-16 bg-zinc-900 border border-zinc-800 rounded-2xl text-center shadow-xl my-4">
+          <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center text-gray-400 mb-3">
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
@@ -328,21 +328,22 @@ export default function CoachesView() {
             return (
               <article
                 key={coach.id}
-                className="bg-[#1c1c1e] border border-white/10 rounded-2xl p-6 flex flex-col justify-between hover:border-white/20 transition-all duration-300 shadow-2xl relative overflow-hidden group"
+                className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col justify-between hover:border-zinc-700 transition-all duration-300 shadow-2xl relative overflow-hidden group"
               >
                 {/* Top Badge & Rating Row */}
                 <div className="flex items-center justify-between gap-2 mb-4">
                   {coach.isAssigned ? (
-                    <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
+                    <span className="bg-zinc-800 text-zinc-200 border border-zinc-700 text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
                       Your Assigned Coach
                     </span>
                   ) : (
-                    <span className="bg-gray-800/80 text-gray-300 border border-white/10 text-[11px] font-medium px-2.5 py-1 rounded-full">
+                    <span className="bg-zinc-800 text-gray-400 border border-zinc-700 text-[11px] font-medium px-2.5 py-1 rounded-full">
                       Certified Coach
                     </span>
                   )}
-                  <div className="flex items-center gap-1 bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-full text-xs font-bold">
-                    <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 20 20">
+                  <div className="flex items-center gap-1 bg-zinc-800 text-zinc-200 border border-zinc-700 px-2.5 py-1 rounded-full text-xs font-bold">
+                    <svg className="w-3.5 h-3.5 fill-amber-400 text-amber-400" viewBox="0 0 20 20">
                       <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                     </svg>
                     <span>{coach.rating}</span>
@@ -356,12 +357,12 @@ export default function CoachesView() {
                   <img
                     src={coach.avatarUrl}
                     alt={`Coach ${coach.name}`}
-                    className="w-20 h-20 rounded-full object-cover border-2 border-emerald-500/50 shadow-lg shrink-0 group-hover:scale-105 transition-transform duration-300"
+                    className="w-20 h-20 rounded-full object-cover border-2 border-zinc-700 shadow-lg shrink-0 group-hover:scale-105 transition-transform duration-300"
                   />
                   <div className="flex flex-col">
                     <h2 className="text-lg font-extrabold text-white tracking-tight leading-snug">{coach.name}</h2>
-                    <p className="text-xs font-medium text-emerald-400 mt-0.5">{coach.title}</p>
-                    <div className="mt-2 inline-flex items-center gap-1.5 bg-zinc-900 border border-white/10 px-2.5 py-1 rounded-lg text-[11px] text-gray-300 font-mono self-start">
+                    <p className="text-xs font-medium text-zinc-400 mt-0.5">{coach.title}</p>
+                    <div className="mt-2 inline-flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 px-2.5 py-1 rounded-lg text-[11px] text-gray-300 font-mono self-start">
                       <span>⚡</span>
                       <span className="font-semibold">{coach.experience} Exp</span>
                     </div>
@@ -373,7 +374,7 @@ export default function CoachesView() {
                   {coach.specialties.map((spec, i) => (
                     <span
                       key={i}
-                      className="bg-zinc-900 text-gray-300 border border-white/10 text-[11px] font-medium px-2.5 py-1 rounded-lg"
+                      className="bg-zinc-950 text-gray-300 border border-zinc-800 text-[11px] font-medium px-2.5 py-1 rounded-lg"
                     >
                       {spec}
                     </span>
@@ -381,14 +382,14 @@ export default function CoachesView() {
                 </div>
 
                 {/* Short Bio / Description */}
-                <div className="bg-zinc-900/60 border border-white/5 rounded-xl p-3 mb-5">
+                <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3 mb-5">
                   <p className={`text-xs text-gray-300 leading-relaxed ${isExpanded ? '' : 'line-clamp-2'}`}>
                     {coach.bio}
                   </p>
                   <button
                     type="button"
                     onClick={() => toggleExpand(coach.id)}
-                    className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 mt-1.5 focus:outline-none"
+                    className="text-[11px] font-bold text-red-500 hover:text-red-400 mt-1.5 focus:outline-none"
                   >
                     {isExpanded ? 'Show Less' : 'Read Bio'}
                   </button>
@@ -401,22 +402,22 @@ export default function CoachesView() {
                   disabled={isRequestingThis || isAlreadyRequested}
                   className={`w-full font-bold py-3 px-4 rounded-xl transition-all shadow-lg text-xs sm:text-sm flex items-center justify-center gap-2 ${
                     isAlreadyRequested
-                      ? 'bg-zinc-800 text-emerald-400 border border-emerald-500/40 cursor-default'
+                      ? 'bg-zinc-800 text-red-400 border border-red-500/40 cursor-default'
                       : isRequestingThis
-                      ? 'bg-emerald-600 text-zinc-950 opacity-80 cursor-wait'
-                      : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 hover:shadow-emerald-500/20'
+                      ? 'bg-red-700 text-white opacity-80 cursor-wait'
+                      : 'bg-red-600 hover:bg-red-700 text-white hover:shadow-red-600/25'
                   }`}
                 >
                   {isAlreadyRequested ? (
                     <>
-                      <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                      <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                       </svg>
                       Requested ✓
                     </>
                   ) : isRequestingThis ? (
                     <>
-                      <div className="w-4 h-4 border-2 border-zinc-950 border-t-transparent rounded-full animate-spin" />
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       Sending Request...
                     </>
                   ) : (

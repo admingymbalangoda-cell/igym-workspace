@@ -43,7 +43,7 @@ export default function PackagePricingModal({
             </div>
             <div>
               <h3 className="text-lg font-bold text-white tracking-wide flex items-center gap-2">
-                Gym Packages & Pricing Manager (ජිම් පැකේජ කළමනාකරණය)
+                Gym Packages & Pricing Manager
               </h3>
               <p className="text-xs text-cyan-300/80">
                 Customize gym membership packages, adjust fees, and add new tiers for your members.
@@ -112,7 +112,7 @@ export default function PackagePricingModal({
               onClick={() => setShowAddNewPackageCard(!showAddNewPackageCard)}
               className="px-3.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-md shadow-cyan-500/20 cursor-pointer"
             >
-              <Plus className="w-4 h-4" /> {showAddNewPackageCard ? "Close Form" : "Add New Package (නව පැකේජයක්)"}
+              <Plus className="w-4 h-4" /> {showAddNewPackageCard ? "Close Form" : "Add New Package"}
             </button>
           </div>
         </div>
@@ -121,7 +121,7 @@ export default function PackagePricingModal({
         <div className="bg-gradient-to-r from-cyan-950/60 via-[#111927] to-cyan-950/40 border border-cyan-500/40 rounded-xl p-3.5 space-y-2 shadow-lg">
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold text-white flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-cyan-400" /> Official Long-Term Membership Discount Rules (දීර්ඝකාලීන වට්ටම්)
+              <TrendingUp className="w-4 h-4 text-cyan-400" /> Official Long-Term Membership Discount Rules
             </h4>
             <span className="text-[10px] font-extrabold text-cyan-300 bg-cyan-500/20 px-2.5 py-0.5 rounded-full border border-cyan-400/40">
               Automatic Rules Active 🏷️
@@ -147,12 +147,12 @@ export default function PackagePricingModal({
         {showAddNewPackageCard && (
           <div className="bg-[#151b2a] border border-cyan-500/50 rounded-xl p-4 space-y-3 shadow-lg animate-in slide-in-from-top-3 duration-200">
             <h4 className="text-xs font-bold text-cyan-300 flex items-center gap-2">
-              <Plus className="w-4 h-4 text-cyan-400" /> Create Custom Package (නව පැකේජයක් සෑදීම)
+              <Plus className="w-4 h-4 text-cyan-400" /> Create Custom Package
             </h4>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Package Name (නම) *</label>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Package Name *</label>
                 <input
                   type="text"
                   placeholder="e.g. Student Discount Membership"
@@ -188,7 +188,7 @@ export default function PackagePricingModal({
             </div>
 
             <div>
-              <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Description (විස්තරය)</label>
+              <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Description</label>
               <input
                 type="text"
                 placeholder="e.g. Access to all gym equipment during off-peak hours..."

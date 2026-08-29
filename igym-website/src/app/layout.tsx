@@ -8,12 +8,12 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "iGYM Balangoda - Premier Fitness Center & Smart Health Club",
-  description: "Transform your body and mind at iGYM Balangoda. High-tech fitness equipment, certified expert coaches, custom nutrition plans, and 24/7 smart access.",
-  keywords: ["iGYM", "Balangoda Gym", "Fitness Center Sri Lanka", "Smart Gym", "Personal Training", "Workout Classes"],
-  authors: [{ name: "iGYM Team" }],
+  title: "IGYM Balangoda - Premier Fitness Center & Smart Health Club",
+  description: "Transform your body and mind at IGYM Balangoda. High-tech fitness equipment, certified expert coaches, custom nutrition plans, and 24/7 smart access.",
+  keywords: ["IGYM", "Balangoda Gym", "Fitness Center Sri Lanka", "Smart Gym", "Personal Training", "Workout Classes"],
+  authors: [{ name: "IGYM Team" }],
   openGraph: {
-    title: "iGYM Balangoda - Premier Fitness Center",
+    title: "IGYM Balangoda - Premier Fitness Center",
     description: "Elevate your workout experience with state-of-the-art equipment, certified coaches, and modern facilities.",
     images: ["/hero-bg.png"],
   },
@@ -26,7 +26,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${inter.variable} dark scroll-smooth`}>
-      <body className="bg-[#0b0f17] text-slate-100 min-h-screen font-sans selection:bg-[#00f2fe]/30 selection:text-[#00f2fe]">
+      <body className="bg-zinc-950 text-slate-100 min-h-screen font-sans selection:bg-red-500/30 selection:text-red-500">
         {children}
       </body>
     </html>

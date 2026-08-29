@@ -56,7 +56,7 @@ export default function GlobalNotificationListener() {
               schema: 'public',
               table: 'chat_messages',
             },
-            (payload) => {
+            (payload: any) => {
               const newMsg = payload.new
               if (!newMsg) return
 
@@ -107,7 +107,7 @@ export default function GlobalNotificationListener() {
                           gap: '8px',
                           fontWeight: 600,
                           fontSize: '0.95rem',
-                          color: '#10b981',
+                          color: '#ef4444',
                         }}
                       >
                         <svg
@@ -127,7 +127,7 @@ export default function GlobalNotificationListener() {
                       <div
                         style={{
                           fontSize: '0.85rem',
-                          color: '#e2e8f0',
+                          color: '#e4e4e7',
                           lineHeight: '1.4',
                           wordBreak: 'break-word',
                         }}
@@ -137,7 +137,7 @@ export default function GlobalNotificationListener() {
                       <div
                         style={{
                           fontSize: '0.75rem',
-                          color: '#94a3b8',
+                          color: '#a1a1aa',
                           marginTop: '2px',
                           fontWeight: 500,
                         }}
@@ -149,12 +149,12 @@ export default function GlobalNotificationListener() {
                   {
                     duration: 6000,
                     style: {
-                      background: '#0f172a',
-                      color: '#fff',
-                      border: '1px solid #1e293b',
+                      background: '#18181b',
+                      color: '#f4f4f5',
+                      border: '1px solid #27272a',
                       borderRadius: '12px',
                       padding: '12px 16px',
-                      boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5)',
+                      boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(0, 0, 0, 0.5)',
                       maxWidth: '380px',
                     },
                   }
