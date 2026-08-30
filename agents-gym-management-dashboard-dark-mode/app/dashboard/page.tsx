@@ -1716,6 +1716,17 @@ export default function Home() {
         alert(`⚠️ Could not send broadcast notification: ${notifErr.message}`);
       } else {
         alert("🎉 Notification sent to all members!");
+        // Automatically send Push Notification to All Subscribed Users via OneSignal REST API
+        fetch("/api/notifications/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: broadcastTitle.trim(),
+            message: broadcastMessage.trim(),
+            data: { type: "global_notification" },
+          }),
+        }).catch((pushErr) => console.error("⚠️ OneSignal push notification error:", pushErr));
+
         setBroadcastTitle("");
         setBroadcastMessage("");
       }
@@ -2474,6 +2485,16 @@ export default function Home() {
         console.error("⚠️ Failed to insert message into chat_messages:", error.message);
       } else {
         console.log("✅ Message inserted into chat_messages DB successfully.");
+        // Automatically send Push Notification to All Subscribed Users via OneSignal REST API
+        fetch("/api/notifications/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: `New Message from iGYM Admin`,
+            message: textToSend,
+            data: { type: "chat_message", memberId: resolvedMemberId },
+          }),
+        }).catch((pushErr) => console.error("⚠️ OneSignal push notification error:", pushErr));
       }
     } catch (err: any) {
       console.error("⚠️ Exception inserting into chat_messages:", err);
@@ -2715,6 +2736,17 @@ export default function Home() {
         console.error("⚠️ Bulk broadcast insert error:", bulkErr.message);
         alert(`⚠️ Failed to broadcast announcement: ${bulkErr.message}`);
       } else {
+        // Automatically send Push Notification to All Subscribed Users via OneSignal REST API
+        fetch("/api/notifications/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: "📢 Gym Announcement",
+            message: chatBroadcastMessage.trim(),
+            data: { type: "announcement" },
+          }),
+        }).catch((pushErr) => console.error("⚠️ OneSignal push notification error:", pushErr));
+
         setChatConversations((prev) => {
           const updated = [...prev];
           targetMembers.forEach((m) => {

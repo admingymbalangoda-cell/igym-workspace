@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { sendPushNotification } from '@/lib/onesignal'
 
 export const revalidate = 0
 export const dynamic = 'force-dynamic'
@@ -99,6 +100,13 @@ export async function GET(request: Request) {
           memberId: resolvedMemberId,
           name: memberName,
           expiryDate: expiryFormatted,
+        })
+
+        // Also trigger OneSignal Push Notification to All Subscribed Users / Members
+        await sendPushNotification({
+          title: '⏳ Membership Renewal Reminder',
+          message: reminderText,
+          data: { type: 'membership_expiry_reminder', memberId: resolvedMemberId },
         })
       }
     }
