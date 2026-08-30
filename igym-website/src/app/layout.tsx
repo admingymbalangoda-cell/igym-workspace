@@ -25,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} dark scroll-smooth`}>
+    <html lang="en" className={`${inter.variable} dark scroll-smooth`} suppressHydrationWarning>
       <body className="bg-zinc-950 text-slate-100 min-h-screen font-sans selection:bg-red-500/30 selection:text-red-500">
         {children}
       </body>
