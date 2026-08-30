@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import InstallPWA from '@/components/InstallPWA'
+import OneSignalInit from '@/components/OneSignalInit'
 
 export const metadata: Metadata = {
   title: {
@@ -52,6 +53,7 @@ export default function RootLayout({
       <body>
         {children}
         <InstallPWA />
+        <OneSignalInit />
       </body>
     </html>
   )
