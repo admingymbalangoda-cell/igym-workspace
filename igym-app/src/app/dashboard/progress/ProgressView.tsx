@@ -46,10 +46,13 @@ export default function ProgressView() {
   // Guard against stale background polling or realtime events overwriting fresh local updates
   const lastLocalUpdateRef = useRef<number>(0)
   const pendingWeightRef = useRef<number | null>(null)
+  const pendingTargetWeightRef = useRef<number | null>(null)
   const showLogModalRef = useRef(showLogModal)
   showLogModalRef.current = showLogModal
   const isUpdatingRef = useRef(isUpdating)
   isUpdatingRef.current = isUpdating
+  const isEditingTargetRef = useRef(isEditingTarget)
+  isEditingTargetRef.current = isEditingTarget
 
   // Client mount & Auth User resolution
   useEffect(() => {
@@ -138,18 +141,27 @@ export default function ProgressView() {
           if (memberData.starting_weight) setStartingWeightVal(Number(memberData.starting_weight))
         }
 
+        const isRecentlyUpdated = isUpdatingRef.current || Date.now() - lastLocalUpdateRef.current < 30000
+
         // Fetch Target Goal from Supabase members table (fallback to localStorage if empty)
-        if (memberData?.target_weight && !isNaN(Number(memberData.target_weight)) && Number(memberData.target_weight) > 0) {
-          const fetchedTarget = Number(memberData.target_weight)
-          setTargetWeightVal(fetchedTarget)
-          setEditTargetInput(fetchedTarget.toFixed(1))
-        } else {
-          const localKey = `target_weight_${targetMemberId}`
-          const savedTarget = typeof window !== 'undefined' ? localStorage.getItem(localKey) : null
-          if (savedTarget && !isNaN(Number(savedTarget)) && Number(savedTarget) > 0) {
-            const localTarget = Number(savedTarget)
-            setTargetWeightVal(localTarget)
-            setEditTargetInput(localTarget.toFixed(1))
+        // Guard: Do NOT overwrite editTargetInput if user is currently editing target goal
+        if (!isEditingTargetRef.current) {
+          if (isRecentlyUpdated && pendingTargetWeightRef.current !== null) {
+            const targetVal = pendingTargetWeightRef.current
+            setTargetWeightVal(targetVal)
+            setEditTargetInput(targetVal.toFixed(1))
+          } else if (memberData?.target_weight && !isNaN(Number(memberData.target_weight)) && Number(memberData.target_weight) > 0) {
+            const fetchedTarget = Number(memberData.target_weight)
+            setTargetWeightVal(fetchedTarget)
+            setEditTargetInput(fetchedTarget.toFixed(1))
+          } else {
+            const localKey = `target_weight_${targetMemberId}`
+            const savedTarget = typeof window !== 'undefined' ? localStorage.getItem(localKey) : null
+            if (savedTarget && !isNaN(Number(savedTarget)) && Number(savedTarget) > 0) {
+              const localTarget = Number(savedTarget)
+              setTargetWeightVal(localTarget)
+              setEditTargetInput(localTarget.toFixed(1))
+            }
           }
         }
 
@@ -159,8 +171,6 @@ export default function ProgressView() {
           .select('*')
           .or(`member_id.eq.${targetMemberId},member_id.eq.${cleanId},member_id.eq.${hyphenId},member_id.eq.${userId}`)
           .order('recorded_date', { ascending: true })
-
-        const isRecentlyUpdated = isUpdatingRef.current || Date.now() - lastLocalUpdateRef.current < 30000
 
         if (trackError) {
           console.error('Error fetching weight_tracking history:', trackError)
@@ -265,7 +275,7 @@ export default function ProgressView() {
       .subscribe()
 
     const pollInterval = setInterval(() => {
-      if (showLogModalRef.current || isUpdatingRef.current || Date.now() - lastLocalUpdateRef.current < 30000) return
+      if (showLogModalRef.current || isUpdatingRef.current || isEditingTargetRef.current || Date.now() - lastLocalUpdateRef.current < 30000) return
       fetchWeightData(undefined, true)
     }, 5000)
 
@@ -416,68 +426,165 @@ export default function ProgressView() {
   }
 
   // Save Target Goal to Supabase members table & sync local state
-  const handleSaveTargetGoal = async () => {
-    const parsed = parseFloat(editTargetInput)
-    if (isNaN(parsed) || parsed <= 0) {
-      setIsEditingTarget(false)
+  const handleSaveTargetGoal = async (e?: React.SyntheticEvent) => {
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault()
+    }
+    if (e && typeof e.stopPropagation === 'function') {
+      e.stopPropagation()
+    }
+
+    const newTarget = parseFloat(editTargetInput)
+    console.log("Attempting to save:", newTarget)
+
+    if (isNaN(newTarget) || newTarget <= 0) {
+      setToastMessage('Please enter a valid target weight in kg')
       return
     }
 
-    // Instantly update local state so progress % and chart reference line reflect immediately
-    setTargetWeightVal(parsed)
-    setIsEditingTarget(false)
-    setToastMessage(`Target goal updated to ${parsed.toFixed(1)} kg`)
+    setSubmitting(true)
 
     try {
-      const activeMemberId = memberId || (currentUser?.email ? currentUser.email.split('@')[0] : '')
-      const targetDbUuid = memberDbUuid || currentUser?.id
+      const {
+        data: { user },
+        error: authErr,
+      } = await supabase.auth.getUser()
+
+      if (authErr || !user) {
+        const err = authErr || new Error('User authentication session not found.')
+        console.error("DB Error:", err)
+        setToastMessage(`Error: ${err.message}`)
+        setSubmitting(false)
+        return
+      }
+
+      const activeUser = user || currentUser
+      const userEmail = activeUser?.email ?? ''
+      const userId = activeUser?.id ?? ''
+      const emailPrefix = userEmail.includes('@') ? userEmail.split('@')[0].trim() : userEmail.trim()
+      const cleanId = emailPrefix ? emailPrefix.toUpperCase().replace(/^MEM-/, 'MEM') : ''
+      const hyphenId = cleanId ? cleanId.replace(/^MEM/, 'MEM-') : ''
+      const activeMemberId = memberId || cleanId || 'MEM001'
+      const targetDbUuid = memberDbUuid
 
       const updatePayload = {
-        target_weight: parsed,
+        target_weight: newTarget,
         updated_at: new Date().toISOString(),
       }
 
-      let targetUpdated = false
-      if (targetDbUuid) {
+      let updatedData: any[] | null = null
+      let lastError: any = null
+
+      // Attempt 1: Target by auth_user_id (standard foreign key)
+      if (userId) {
+        const { data, error } = await supabase
+          .from('members')
+          .update(updatePayload)
+          .eq('auth_user_id', userId)
+          .select('id, member_id, target_weight')
+
+        console.log("DB Response:", data)
+        console.error("DB Error:", error)
+
+        if (error) {
+          lastError = error
+        } else if (data && data.length > 0) {
+          updatedData = data
+        }
+      }
+
+      // Attempt 2: Target by primary key UUID (id)
+      if (!updatedData && targetDbUuid && targetDbUuid !== userId) {
         const { data, error } = await supabase
           .from('members')
           .update(updatePayload)
           .eq('id', targetDbUuid)
-          .select('id')
-        if (!error && data && data.length > 0) {
-          targetUpdated = true
+          .select('id, member_id, target_weight')
+
+        console.log("DB Response:", data)
+        console.error("DB Error:", error)
+
+        if (error) {
+          if (!lastError) lastError = error
+        } else if (data && data.length > 0) {
+          updatedData = data
         }
       }
 
-      if (!targetUpdated && currentUser?.id) {
+      // Attempt 3: Target by string member_id (cleanId)
+      if (!updatedData && cleanId) {
         const { data, error } = await supabase
           .from('members')
           .update(updatePayload)
-          .eq('auth_user_id', currentUser.id)
-          .select('id')
-        if (!error && data && data.length > 0) {
-          targetUpdated = true
+          .eq('member_id', cleanId)
+          .select('id, member_id, target_weight')
+
+        console.log("DB Response:", data)
+        console.error("DB Error:", error)
+
+        if (error) {
+          if (!lastError) lastError = error
+        } else if (data && data.length > 0) {
+          updatedData = data
         }
       }
 
-      if (!targetUpdated && activeMemberId) {
+      // Attempt 4: Target by string member_id (hyphenId)
+      if (!updatedData && hyphenId && hyphenId !== cleanId) {
         const { data, error } = await supabase
           .from('members')
           .update(updatePayload)
-          .eq('member_id', activeMemberId)
-          .select('id')
-        if (!error && data && data.length > 0) {
-          targetUpdated = true
+          .eq('member_id', hyphenId)
+          .select('id, member_id, target_weight')
+
+        console.log("DB Response:", data)
+        console.error("DB Error:", error)
+
+        if (error) {
+          if (!lastError) lastError = error
+        } else if (data && data.length > 0) {
+          updatedData = data
         }
       }
 
-      if (typeof window !== 'undefined' && activeMemberId) {
-        localStorage.setItem(`target_weight_${activeMemberId}`, parsed.toString())
+      // Check DB error
+      if (lastError && !updatedData) {
+        console.error("DB Error:", lastError)
+        setToastMessage(`Error: ${lastError.message}`)
+        return
+      }
+
+      if (!updatedData || updatedData.length === 0) {
+        console.error("DB Error: No matching member record found.")
+        setToastMessage('Error updating target weight in DB')
+        return
+      }
+
+      // Update React state after verified DB success
+      lastLocalUpdateRef.current = Date.now()
+      pendingTargetWeightRef.current = newTarget
+
+      setTargetWeightVal(newTarget)
+      setEditTargetInput(newTarget.toFixed(1))
+      setIsEditingTarget(false)
+
+      if (typeof window !== 'undefined') {
+        if (activeMemberId) localStorage.setItem(`target_weight_${activeMemberId}`, newTarget.toString())
+        if (cleanId) localStorage.setItem(`target_weight_${cleanId}`, newTarget.toString())
+        if (hyphenId) localStorage.setItem(`target_weight_${hyphenId}`, newTarget.toString())
+      }
+
+      setToastMessage(`Target goal updated to ${newTarget.toFixed(1)} kg`)
+
+      if (router && typeof router.refresh === 'function') {
+        router.refresh()
       }
     } catch (err: any) {
-      console.error('Exception updating target_weight:', err)
+      console.error("DB Error:", err)
+      setToastMessage(`Error: ${err?.message || 'Database update exception'}`)
     } finally {
-      setTimeout(() => setToastMessage(null), 3000)
+      setSubmitting(false)
+      setTimeout(() => setToastMessage(null), 3500)
     }
   }
 
@@ -500,7 +607,7 @@ export default function ProgressView() {
   const maxW = Math.ceil(Math.max(...weights, startingW) + 2)
 
   return (
-    <div className="flex flex-col gap-8 p-6 md:p-8 w-full max-w-7xl mx-auto">
+    <div className="flex flex-col gap-8 p-6 md:p-8 w-full max-w-7xl mx-auto" suppressHydrationWarning>
       {/* ── Toast Notification Banner ──────────────────────────────────────── */}
       {toastMessage && (
         <div className="fixed top-6 right-6 z-50 bg-zinc-800 text-white px-5 py-3 rounded-2xl font-medium shadow-2xl flex items-center gap-3 text-sm border border-zinc-700 backdrop-blur-md">
@@ -517,7 +624,7 @@ export default function ProgressView() {
         </div>
         <button
           type="button"
-          className="inline-flex items-center justify-center gap-2.5 bg-red-600 hover:bg-red-700 text-white font-bold px-5 py-3 rounded-2xl transition-all shadow-xl hover:shadow-red-600/25 text-sm shrink-0"
+          className="inline-flex items-center justify-center gap-2.5 bg-red-600 hover:bg-red-700 text-white font-bold px-5 py-3 rounded-2xl transition-all shadow-xl hover:shadow-red-600/25 text-sm shrink-0 cursor-pointer"
           onClick={() => {
             setDraftWeight(currentWeightVal.toFixed(1))
             setShowLogModal(true)
@@ -536,11 +643,11 @@ export default function ProgressView() {
         {/* Card 1: Current Weight */}
         <div className="bg-zinc-900 p-6 md:p-7 rounded-2xl flex flex-col items-center justify-center border border-zinc-800 text-center shadow-2xl hover:border-zinc-700 transition-all duration-300">
           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Current Weight</span>
-          <div className="flex items-baseline gap-1 my-1">
+          <div className="flex items-baseline gap-1 my-1" suppressHydrationWarning>
             <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">{loading ? '...' : currentW.toFixed(1)}</span>
             <span className="text-xs font-bold text-zinc-400">kg</span>
           </div>
-          <span className="text-xs text-gray-500 mt-1">Starting: {startingW.toFixed(1)} kg</span>
+          <span className="text-xs text-gray-500 mt-1" suppressHydrationWarning>Starting: {startingW.toFixed(1)} kg</span>
         </div>
 
         {/* Card 2: Target Weight (Editable with Local Storage) */}
@@ -550,11 +657,13 @@ export default function ProgressView() {
             {!isEditingTarget && (
               <button
                 type="button"
-                onClick={() => {
-                  setEditTargetInput(targetW.toString())
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setEditTargetInput(targetW.toFixed(1))
                   setIsEditingTarget(true)
                 }}
-                className="text-gray-500 hover:text-zinc-300 transition-colors p-0.5"
+                className="text-gray-500 hover:text-zinc-300 transition-colors p-0.5 cursor-pointer"
                 title="Edit Target Goal"
               >
                 <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -573,15 +682,25 @@ export default function ProgressView() {
                 value={editTargetInput}
                 onChange={(e) => setEditTargetInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSaveTargetGoal()
-                  if (e.key === 'Escape') setIsEditingTarget(false)
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    handleSaveTargetGoal(e)
+                  }
+                  if (e.key === 'Escape') {
+                    setIsEditingTarget(false)
+                  }
                 }}
                 autoFocus
               />
               <button
                 type="button"
-                onClick={handleSaveTargetGoal}
-                className="bg-zinc-800 hover:bg-zinc-700 text-white p-1.5 rounded-lg border border-zinc-700 transition-colors shadow"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  handleSaveTargetGoal(e)
+                }}
+                className="bg-zinc-800 hover:bg-zinc-700 text-white p-1.5 rounded-lg border border-zinc-700 transition-colors shadow cursor-pointer active:scale-95"
                 title="Save Target Goal"
               >
                 <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
@@ -590,13 +709,13 @@ export default function ProgressView() {
               </button>
             </div>
           ) : (
-            <div className="flex items-baseline gap-1 my-1">
+            <div className="flex items-baseline gap-1 my-1" suppressHydrationWarning>
               <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">{targetW.toFixed(1)}</span>
               <span className="text-xs font-bold text-zinc-400">kg</span>
             </div>
           )}
 
-          <span className="text-xs text-gray-500 mt-1 truncate max-w-full">
+          <span className="text-xs text-gray-500 mt-1 truncate max-w-full" suppressHydrationWarning>
             {isGoalReached ? '🎉 Goal Achieved!' : `${remainingKg} kg left to goal`}
           </span>
         </div>
