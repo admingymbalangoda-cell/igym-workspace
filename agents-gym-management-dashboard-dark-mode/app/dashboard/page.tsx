@@ -2457,7 +2457,7 @@ export default function Home() {
           memberId: resolvedMemberId,
           memberName: targetMember ? targetMember.name : "Gym Member",
           phone: targetMember ? targetMember.phone : "N/A",
-          tier: targetMember ? targetMember.tier : "Standard",
+          tier: targetMember?.tier || "No Active Plan",
           status: "Online",
           lastActive: "Just now",
           unreadCount: 0,
@@ -2682,7 +2682,7 @@ export default function Home() {
                   memberId: targetMemId,
                   memberName: targetMem ? targetMem.name : "Gym Member",
                   phone: targetMem ? targetMem.phone : "N/A",
-                  tier: targetMem ? targetMem.tier : "Standard",
+                  tier: targetMem?.tier || "No Active Plan",
                   status: "Online",
                   lastActive: "Just now",
                   unreadCount: isMsgAdmin ? 0 : 1,
@@ -3428,25 +3428,42 @@ export default function Home() {
         console.log("payment_history insert notice:", histErr);
       }
 
-      // Update Member Expiry Date in Supabase & Local State
+      // Update Member Expiry Date, Status & Package in Supabase & Local State
       try {
-        await supabase
+        const memberUpdateData: any = {
+          expiry_date: resolvedDueDate,
+          status: "Active",
+          tier: resolvedCategory,
+          package: resolvedCategory,
+          membership_plan: resolvedCategory,
+        };
+
+        const { error: updErr } = await supabase
           .from("members")
-          .update({
-            expiry_date: resolvedDueDate,
-            status: "Active",
-          })
+          .update(memberUpdateData)
           .or(`id.eq.${memberIdForDb},member_id.eq.${resolvedMemberId}`);
+
+        if (updErr) {
+          // Fallback retry with core tier column
+          await supabase
+            .from("members")
+            .update({
+              expiry_date: resolvedDueDate,
+              status: "Active",
+              tier: resolvedCategory,
+            })
+            .or(`id.eq.${memberIdForDb},member_id.eq.${resolvedMemberId}`);
+        }
 
         setMembers((prev) =>
           prev.map((m) =>
             m.id === resolvedMemberId || m.dbUuid === memberIdForDb
-              ? { ...m, expiryDate: resolvedDueDate, status: "Active" }
+              ? { ...m, expiryDate: resolvedDueDate, status: "Active", tier: resolvedCategory }
               : m
           )
         );
       } catch (expUpdateErr) {
-        console.error("⚠️ Failed to update member expiry date:", expUpdateErr);
+        console.error("⚠️ Failed to update member package/status:", expUpdateErr);
       }
     }
 
@@ -3839,7 +3856,7 @@ export default function Home() {
       height: hVal,
       weight: wVal,
       targetWeight: targetWVal,
-      tier: member.tier || "Standard Monthly Membership",
+      tier: member.tier || "",
       status: (member.status === "Active" ? "Active" : "Inactive") as "Active" | "Inactive",
       emergencyContact: emContactVal,
       isPTMember: !!isPT,
@@ -3889,7 +3906,7 @@ export default function Home() {
         height: hVal,
         weight: wVal,
         targetWeight: targetWVal,
-        tier: selectedMember.tier || "Standard Monthly Membership",
+        tier: selectedMember.tier || "",
         status: (selectedMember.status === "Active" ? "Active" : "Inactive") as "Active" | "Inactive",
         emergencyContact: emContactVal,
         isPTMember: !!isPT,
@@ -4202,8 +4219,10 @@ export default function Home() {
   const [packageFilter, setPackageFilter] = useState<string>("All Packages");
 
   const matchesPackageFilter = (member: Member, filter: string): boolean => {
-    if (filter === "All Packages") return true;
-    const tierLower = (member.tier || "").toLowerCase();
+    if (!filter || filter === "All Packages") return true;
+    const tierLower = (member.tier || "").toLowerCase().trim();
+    if (!tierLower) return false;
+
     const hasTreadmill =
       tierLower.includes("treadmill") ||
       tierLower.includes("+ tr") ||
@@ -4236,7 +4255,7 @@ export default function Home() {
           !!member.isPTMember
         );
       default:
-        return true;
+        return tierLower === filter.toLowerCase().trim() || tierLower.includes(filter.toLowerCase().trim());
     }
   };
 
@@ -5730,8 +5749,8 @@ export default function Home() {
                                     <span className="text-[10px] font-mono text-zinc-400">
                                       {member.id}
                                     </span>
-                                    <span className="text-[10px] px-2 py-0.2 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-800/40 font-medium">
-                                      {member.tier}
+                                    <span className={`text-[10px] px-2 py-0.2 rounded font-medium border ${member.tier ? "bg-cyan-950/60 text-cyan-300 border-cyan-800/40" : "bg-zinc-800/60 text-zinc-400 border-zinc-700/40"}`}>
+                                      {member.tier || "No Active Plan"}
                                     </span>
                                   </div>
                                 </div>
@@ -8050,9 +8069,9 @@ export default function Home() {
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-xs font-mono font-bold text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/50">{selectedMember.id}</span>
                     <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50">
-                      {selectedMember.status === "Inactive" || !selectedMember.tier || selectedMember.tier === "Standard Membership"
+                      {selectedMember.status === "Inactive" || !selectedMember.tier
                         ? "No Active Plan"
-                        : `${selectedMember.tier} Membership`}
+                        : selectedMember.tier.toLowerCase().includes("membership") ? selectedMember.tier : `${selectedMember.tier} Membership`}
                     </span>
                   </div>
                 </div>
@@ -8779,7 +8798,7 @@ export default function Home() {
             <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between">
               <span className="text-xs font-bold text-amber-300 uppercase tracking-wide">Active Package</span>
               <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/20 px-3 py-1 rounded-lg border border-amber-500/40">
-                {selectedMember.tier || formData.tier || "Standard"}
+                {selectedMember.tier || formData.tier || "No Active Plan"}
               </span>
             </div>
 
@@ -9568,7 +9587,7 @@ export default function Home() {
                           <div className="flex items-center gap-3">
                             <div className="text-right">
                               <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                                {m.tier || m.category || "Standard"}
+                                {m.tier || m.category || "No Active Plan"}
                               </span>
                               <span className="block text-[10px] text-zinc-400 font-mono mt-0.5">
                                 Exp: {m.expiry_date || m.expiryDate || "Active"}

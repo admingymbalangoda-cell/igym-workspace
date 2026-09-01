@@ -323,7 +323,7 @@ export async function importMembersCSVAction(
         height: Number(rec.height) || 170,
         weight: Number(rec.weight) || 70,
         starting_weight: Number(rec.weight) || 70,
-        tier: rec.package || 'Standard',
+        tier: rec.package || null,
         status: 'Active',
         joined_date: new Date().toISOString().split('T')[0],
         emergency_contact: 'N/A',

@@ -254,7 +254,7 @@ export default function ActiveRateModal({
                     </td>
                     <td className="py-3 text-xs">
                       <span className={`px-2.5 py-1 rounded font-bold border text-[10px] ${getPackageColorClasses(mem.tier)}`}>
-                        {mem.tier || "Standard"}
+                        {mem.tier || "No Active Plan"}
                       </span>
                     </td>
                     <td className="py-3 font-mono text-zinc-400 text-xs whitespace-nowrap">{mem.joinDate}</td>

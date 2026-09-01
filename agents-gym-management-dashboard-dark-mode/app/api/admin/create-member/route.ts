@@ -183,7 +183,7 @@ export async function POST(req: Request) {
       height: height ? Number(height) : null,
       weight: weight ? Number(weight) : null,
       starting_weight: weight ? Number(weight) : null,
-      tier: tier || 'Standard',
+      tier: tier || null,
       status: status || 'Active',
       joined_date: new Date().toISOString().split('T')[0],
       duration_months: durationMonths ? Number(durationMonths) : null,
