@@ -35,6 +35,12 @@ export default function ChatView() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Synchronous refs for real-time validation guard
+  const loggedInMemberIdRef = useRef(loggedInMemberId)
+  loggedInMemberIdRef.current = loggedInMemberId
+  const currentAuthUserIdRef = useRef(currentAuthUserId)
+  currentAuthUserIdRef.current = currentAuthUserId
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -103,55 +109,129 @@ export default function ChatView() {
     }
   }, [supabase])
 
-  // 2. Real-time Subscription to `chat_messages` table
+  // 2. Real-time Subscription to `chat_messages` table filtered for current member
   useEffect(() => {
+    const cleanId = loggedInMemberId ? loggedInMemberId.toUpperCase().replace(/^MEM-/, 'MEM') : ''
+    const hyphenId = cleanId ? cleanId.replace(/^MEM/, 'MEM-') : ''
+    const activeMemberId = loggedInMemberId || cleanId || currentAuthUserId || 'MEM001'
+
+    // Channel name uniquely scoped to the logged-in user
+    const channelName = `chat-messages-${activeMemberId}`
+
+    const handleIncomingMessage = (payload: any) => {
+      const newMsgData = payload?.new
+      if (!newMsgData) return
+
+      // =======================================================================
+      // 1. STRICT IMMEDIATE GUARD CLAUSE AT THE VERY TOP OF THE CALLBACK
+      // =======================================================================
+      const activeUser = currentAuthUserIdRef.current || currentAuthUserId
+      const activeMember = loggedInMemberIdRef.current || loggedInMemberId
+      const memberClean = activeMember ? activeMember.toUpperCase().replace(/^MEM-/, 'MEM') : ''
+      const memberHyphen = memberClean ? memberClean.replace(/^MEM/, 'MEM-') : ''
+
+      const validUserIds = new Set<string>(
+        [activeUser, activeMember, memberClean, memberHyphen].filter((id) => Boolean(id && id.trim()))
+      )
+
+      // Extract all payload fields that could identify user/member/room ownership
+      const payloadUserId = String(newMsgData.user_id || '').trim()
+      const payloadMemberId = String(newMsgData.member_id || '').trim()
+      const payloadSenderId = String(newMsgData.sender_id || newMsgData.sender || '').trim()
+      const payloadReceiverId = String(newMsgData.receiver_id || newMsgData.receiver || '').trim()
+      const payloadRoomId = String(newMsgData.room_id || '').trim()
+
+      // STRICT USER VALIDATION: Payload MUST explicitly belong to current user
+      const matchesUserId = payloadUserId !== '' && validUserIds.has(payloadUserId)
+      const matchesMemberId = payloadMemberId !== '' && validUserIds.has(payloadMemberId)
+      const matchesSenderId = payloadSenderId !== '' && validUserIds.has(payloadSenderId)
+      const matchesReceiverId = payloadReceiverId !== '' && validUserIds.has(payloadReceiverId)
+      const matchesRoomId = payloadRoomId !== '' && validUserIds.has(payloadRoomId)
+
+      const isCurrentUsersMessage =
+        matchesUserId || matchesMemberId || matchesSenderId || matchesReceiverId || matchesRoomId
+
+      // IMMEDIATELY RETURN - DO NOT TOUCH REACT STATE FOR OTHER USERS!
+      if (!isCurrentUsersMessage) {
+        return
+      }
+
+      // =======================================================================
+      // 2. ONLY CALL setMessages AFTER STRICT CHECK HAS PASSED
+      // =======================================================================
+      const msgId = String(newMsgData.id || `msg-${Date.now()}`)
+      const msgText = newMsgData.message || newMsgData.text || newMsgData.content || ''
+      const msgSender = newMsgData.sender || newMsgData.sender_id || 'member'
+      const msgImageUrl = newMsgData.image_url || newMsgData.imageUrl || undefined
+
+      const incomingItem: ChatMessageItem = {
+        id: msgId,
+        member_id: payloadMemberId || activeMember,
+        sender: msgSender,
+        message: msgText,
+        image_url: msgImageUrl,
+        created_at: newMsgData.created_at || new Date().toISOString(),
+      }
+
+      setMessages((prevMessages) => {
+        const isDuplicate = prevMessages.some(
+          (m) =>
+            m.id === msgId ||
+            (m.message === msgText &&
+              m.sender === msgSender &&
+              Math.abs(new Date(m.created_at).getTime() - new Date(incomingItem.created_at).getTime()) < 10000)
+        )
+        if (isDuplicate) return prevMessages
+        return [...prevMessages, incomingItem]
+      })
+    }
+
     const channel = supabase
-      .channel('custom-all-channel')
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'chat_messages',
+          filter: `member_id=eq.${activeMemberId}`,
         },
-        (payload: any) => {
-          const newMsgData = payload.new
-          if (!newMsgData) return
-
-          const msgId = String(newMsgData.id || `msg-${Date.now()}`)
-          const msgText = newMsgData.message || newMsgData.text || newMsgData.content || ''
-          const msgSender = newMsgData.sender || newMsgData.sender_id || 'member'
-          const msgMemberId = String(newMsgData.member_id || '')
-          const msgImageUrl = newMsgData.image_url || newMsgData.imageUrl || undefined
-
-          const incomingItem: ChatMessageItem = {
-            id: msgId,
-            member_id: msgMemberId,
-            sender: msgSender,
-            message: msgText,
-            image_url: msgImageUrl,
-            created_at: newMsgData.created_at || new Date().toISOString(),
-          }
-
-          setMessages((prevMessages) => {
-            const isDuplicate = prevMessages.some(
-              (m) =>
-                m.id === msgId ||
-                (m.message === msgText &&
-                  m.sender === msgSender &&
-                  Math.abs(new Date(m.created_at).getTime() - new Date(incomingItem.created_at).getTime()) < 10000)
-            )
-            if (isDuplicate) return prevMessages
-            return [...prevMessages, incomingItem]
-          })
-        }
+        handleIncomingMessage
       )
-      .subscribe()
+
+    // Additional listeners if member_id in DB uses cleanId or hyphenId format
+    if (cleanId && cleanId !== activeMemberId) {
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `member_id=eq.${cleanId}`,
+        },
+        handleIncomingMessage
+      )
+    }
+
+    if (hyphenId && hyphenId !== activeMemberId && hyphenId !== cleanId) {
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `member_id=eq.${hyphenId}`,
+        },
+        handleIncomingMessage
+      )
+    }
+
+    channel.subscribe()
 
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [supabase])
+  }, [supabase, loggedInMemberId, currentAuthUserId])
 
   // Polling sync fallback
   useEffect(() => {
