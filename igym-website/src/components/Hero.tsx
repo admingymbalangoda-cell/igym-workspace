@@ -180,7 +180,7 @@ export default function Hero({ initialImages = [] }: HeroProps) {
             <div className="glass-card p-3 sm:p-4 rounded-xl text-center sm:text-left border border-zinc-800">
               <div className="flex items-center justify-center sm:justify-start gap-1.5 mb-0.5">
                 <Users className="w-4 h-4 sm:w-5 sm:h-5 text-red-500" />
-                <span className="text-xl sm:text-2xl font-black text-white">1,200+</span>
+                <span className="text-xl sm:text-2xl font-black text-white">400+</span>
               </div>
               <p className="text-[10px] sm:text-xs text-slate-400 font-medium">Active Members</p>
             </div>
