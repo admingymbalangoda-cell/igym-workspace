@@ -7,7 +7,7 @@ import useSWR from "swr";
 import { usePathname, useRouter } from "next/navigation";
 import dynamicImport from "next/dynamic";
 import { supabase } from "@/lib/supabase";
-import { createMemberAction, importMembersCSVAction, resetMemberPasswordAction, CSVImportRecord } from "@/app/actions/member-actions";
+import { createMemberAction, importMembersCSVAction, resetMemberPasswordAction, markChatAsReadAction, CSVImportRecord } from "@/app/actions/member-actions";
 
 const RecordExpenseModal = dynamicImport(() => import("./components/RecordExpenseModal"), { ssr: false });
 const PackagePricingModal = dynamicImport(() => import("./components/PackagePricingModal"), { ssr: false });
@@ -21,6 +21,7 @@ import {
   Users,
   CalendarCheck,
   CreditCard,
+  Receipt,
   QrCode,
   Settings,
   Search,
@@ -219,6 +220,8 @@ export interface Member {
   durationMonths?: number | null;
   expiryDate?: string | null;
   expiry_date?: string | null;
+  partnerMemberId?: string | null;
+  partner_member_id?: string | null;
   profile_pic_url?: string;
   profilePicUrl?: string;
   before_photo_url?: string;
@@ -231,10 +234,13 @@ export interface Member {
 
 export interface PaymentRecord {
   id: string;
+  dbUuid?: string;
   invoiceNo: string;
   memberId: string | null;
   memberName: string;
   externalPayerName?: string;
+  partnerMemberId?: string | null;
+  partner_member_id?: string | null;
   phone: string;
   category: string;
   itemDescription?: string;
@@ -448,6 +454,84 @@ export default function Home() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+
+  // Member Details Modal Payment History State & Fetcher
+  const [showDetailPaymentHistory, setShowDetailPaymentHistory] = useState(false);
+  const [detailMemberPayments, setDetailMemberPayments] = useState<PaymentRecord[]>([]);
+  const [isDetailPaymentsLoading, setIsDetailPaymentsLoading] = useState(false);
+
+  const fetchMemberPaymentHistory = async (memberObj: Member) => {
+    if (!memberObj) return;
+    setIsDetailPaymentsLoading(true);
+
+    const memId = memberObj.id;
+    const dbUuid = memberObj.dbUuid;
+    const memberCustomId = (memberObj as any).member_id || memberObj.memberId;
+
+    // 1. Instantly filter local paymentRecords as immediate results
+    const localMatches = paymentRecords.filter((p) => {
+      const isPrimary = (memId && p.memberId === memId) || (dbUuid && p.memberId === dbUuid) || (memberCustomId && p.memberId === memberCustomId);
+      const isPartner = (memId && (p.partnerMemberId === memId || p.partner_member_id === memId)) ||
+                        (dbUuid && (p.partnerMemberId === dbUuid || p.partner_member_id === dbUuid)) ||
+                        (memberCustomId && (p.partnerMemberId === memberCustomId || p.partner_member_id === memberCustomId));
+      return isPrimary || isPartner;
+    });
+    setDetailMemberPayments(localMatches);
+
+    // 2. Fetch directly from Supabase DB where member_id.eq or partner_member_id.eq
+    try {
+      const filterOrs = [
+        memId ? `member_id.eq.${memId}` : null,
+        dbUuid ? `member_id.eq.${dbUuid}` : null,
+        memberCustomId ? `member_id.eq.${memberCustomId}` : null,
+        memId ? `partner_member_id.eq.${memId}` : null,
+        dbUuid ? `partner_member_id.eq.${dbUuid}` : null,
+        memberCustomId ? `partner_member_id.eq.${memberCustomId}` : null,
+      ].filter(Boolean).join(",");
+
+      if (filterOrs) {
+        const { data: dbData, error } = await supabase
+          .from("payments")
+          .select("*")
+          .or(filterOrs)
+          .order("created_at", { ascending: false });
+
+        if (!error && dbData && dbData.length > 0) {
+          const parsedPayments: PaymentRecord[] = dbData.map((p: any) => ({
+            id: p.id,
+            dbUuid: p.id,
+            invoiceNo: p.invoice_no || p.invoiceNo || `INV-${p.id}`,
+            memberId: p.member_id || p.memberId || null,
+            memberName: p.member_name || p.memberName || memberObj.name,
+            phone: p.phone || memberObj.phone || "N/A",
+            category: p.payment_type || p.category || "Monthly Fee",
+            amount: Number(p.amount) || 0,
+            paidAmount: p.paid_amount !== undefined && p.paid_amount !== null ? Number(p.paid_amount) : Number(p.amount),
+            balanceDue: p.balance_due !== undefined && p.balance_due !== null ? Number(p.balance_due) : 0,
+            paymentDate: p.payment_date || p.paymentDate || new Date().toISOString().split("T")[0],
+            dueDate: p.next_due_date || p.dueDate || "",
+            method: p.method || "Cash",
+            status: (p.balance_due || 0) > 0 ? ("Partial" as any) : "Paid",
+            partnerMemberId: p.partner_member_id || p.partnerMemberId || null,
+            partner_member_id: p.partner_member_id || p.partnerMemberId || null,
+            reminderSent: p.reminder_sent || false,
+          }));
+
+          const combined = [...parsedPayments];
+          localMatches.forEach((lp) => {
+            if (!combined.some((cp) => cp.id === lp.id || cp.invoiceNo === lp.invoiceNo)) {
+              combined.push(lp);
+            }
+          });
+          setDetailMemberPayments(combined);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching member payment history:", err);
+    } finally {
+      setIsDetailPaymentsLoading(false);
+    }
+  };
 
   // Bulk Activation State for Inactive Rate Analysis Modal
   const [selectedBulkInactiveMemberIds, setSelectedBulkInactiveMemberIds] = useState<string[]>([]);
@@ -1097,6 +1181,9 @@ export default function Home() {
   const [isRevenueModalOpen, setIsRevenueModalOpen] = useState(false);
   const [isPackagePricingModalOpen, setIsPackagePricingModalOpen] = useState(false);
   const [isPendingPaymentsModalOpen, setIsPendingPaymentsModalOpen] = useState(false);
+  const [pendingSearchTerm, setPendingSearchTerm] = useState("");
+  const [isInactiveMembersModalOpen, setIsInactiveMembersModalOpen] = useState(false);
+  const [inactiveSearchTerm, setInactiveSearchTerm] = useState("");
 
   // Income vs Expenses View Tab State
   const [paymentViewTab, setPaymentViewTab] = useState<"INCOME" | "EXPENSES">("INCOME");
@@ -1192,9 +1279,10 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [topbarSearchQuery, members]);
   useEffect(() => {
-    const liveIncome = paymentRecords
-      .filter((p) => p.status === "Paid")
-      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const liveIncome = paymentRecords.reduce(
+      (sum, p) => sum + (Number(p.paidAmount !== undefined && p.paidAmount !== null ? p.paidAmount : p.amount) || 0),
+      0
+    );
     const liveExpenses = expenseRecords.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
     if (liveIncome > 0 || liveExpenses > 0) {
@@ -2092,10 +2180,13 @@ export default function Home() {
 
             return {
               id: String(p.id || `PAY-${101 + idx}`),
+              dbUuid: p.id ? String(p.id) : undefined,
               invoiceNo: p.invoice_no || `INV-${new Date().getFullYear()}-${String(idx + 1).padStart(3, "0")}`,
               memberId: isWalkIn ? null : (mem ? mem.id : p.member_id),
               memberName: isWalkIn ? (extPayerName || "Walk-in Guest / External Income") : (p.member_name || (mem ? mem.name : null) || "Member"),
               externalPayerName: extPayerName,
+              partnerMemberId: p.partner_member_id || p.partnerMemberId || null,
+              partner_member_id: p.partner_member_id || p.partnerMemberId || null,
               phone: p.phone || (mem ? mem.phone : null) || "N/A",
               category: p.category || p.payment_type || "Monthly Fee",
               itemDescription: p.item_description || p.itemDescription || undefined,
@@ -2512,6 +2603,83 @@ export default function Home() {
     scrollToBottom();
   }, [activeChatMemberId, chatConversations]);
 
+  // Helper to mark member messages as read in Supabase DB asynchronously (Server Action + Direct Supabase Query)
+  const markMemberMessagesAsRead = async (memberIdToMark: string) => {
+    if (!memberIdToMark) return;
+
+    // 1. Execute Server Action (Service Role bypasses RLS policies)
+    try {
+      const res = await markChatAsReadAction(memberIdToMark);
+      if (!res.success) {
+        console.error("Update failed:", res.error);
+      } else {
+        console.log("Marked as read successfully", res);
+        router.refresh();
+      }
+    } catch (err: any) {
+      console.error("Update failed:", err?.message || err);
+    }
+
+    // 2. Direct Supabase Update Query
+    try {
+      const targetMem = members.find((m) => m.id === memberIdToMark || m.dbUuid === memberIdToMark);
+      const cleanId = memberIdToMark.trim().toUpperCase().replace(/^MEM-/, "MEM");
+      const formattedId = memberIdToMark.trim().startsWith("MEM") ? memberIdToMark : `MEM-${memberIdToMark}`;
+      const dbUuid = targetMem?.dbUuid || targetMem?.id;
+
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .update({ is_read: true })
+        .or(`member_id.eq.${cleanId},member_id.eq.${formattedId},sender_id.eq.${cleanId},sender_id.eq.${formattedId}${dbUuid ? `,member_id.eq.${dbUuid},sender_id.eq.${dbUuid}` : ""}`)
+        .select("id");
+
+      if (error) {
+        console.error("Update failed:", error);
+      } else {
+        console.log("Marked as read successfully", data);
+        router.refresh();
+      }
+    } catch (err: any) {
+      console.error("Update failed:", err?.message || err);
+    }
+  };
+
+  // Select Chat Conversation Handler (Optimistic UI + Global Sidebar Badge Sync + Background DB Sync)
+  const handleSelectChatConversation = (memberId: string, convId?: string) => {
+    setActiveChatMemberId(memberId);
+    setChatConversations((prev) => {
+      const cleanId = memberId.trim().toUpperCase().replace(/^MEM-/, "MEM");
+      const existingIdx = prev.findIndex(
+        (c) =>
+          c.memberId === memberId ||
+          c.memberId.toUpperCase().replace(/^MEM-/, "MEM") === cleanId ||
+          (convId && c.id === convId)
+      );
+
+      if (existingIdx >= 0) {
+        return prev.map((c, i) => (i === existingIdx ? { ...c, unreadCount: 0 } : c));
+      }
+
+      return [
+        ...prev,
+        {
+          id: convId || `CHAT-${memberId}`,
+          memberId: memberId,
+          memberName: "Member",
+          phone: "N/A",
+          tier: "Standard",
+          status: "Online",
+          lastActive: "Just now",
+          unreadCount: 0,
+          messages: [],
+        },
+      ];
+    });
+
+    setIsMobileChatView(true);
+    markMemberMessagesAsRead(memberId);
+  };
+
   // Fetch Chat History from Supabase when activeChatMemberId or members change
   useEffect(() => {
     const fetchChatHistory = async () => {
@@ -2519,6 +2687,8 @@ export default function Home() {
       if (!activeMember || !activeMember.id) return;
 
       const memId = activeMember.id;
+      markMemberMessagesAsRead(memId);
+
       const { data: dbMessages, error } = await supabase
         .from("chat_messages")
         .select("*")
@@ -2811,6 +2981,14 @@ export default function Home() {
     };
   };
 
+  const calculateExpiryDate = (startDate: string | Date, months: number) => {
+    if (!startDate) return "N/A";
+    const date = typeof startDate === "string" ? new Date(startDate) : new Date(startDate.getTime());
+    if (isNaN(date.getTime())) return "N/A";
+    date.setMonth(date.getMonth() + (Number(months) || 1));
+    return date.toISOString().split("T")[0];
+  };
+
   // Payment Form State & Date Range Filtering State
   const [isRecordPaymentModalOpen, setIsRecordPaymentModalOpen] = useState(false);
   const [paymentStartDate, setPaymentStartDate] = useState<string>("");
@@ -2831,22 +3009,479 @@ export default function Home() {
     gymRevenuePercentage: 20,
   });
 
-  // Delete single payment record from Supabase DB FIRST, then update UI state & refresh data
-  const handleDeletePayment = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this payment record?")) return;
+  // Edit Payment State & Handlers
+  const [isEditPaymentModalOpen, setIsEditPaymentModalOpen] = useState(false);
+  const [editingPaymentRecord, setEditingPaymentRecord] = useState<PaymentRecord | null>(null);
+  const [partnerComboboxQuery, setPartnerComboboxQuery] = useState("");
+  const [isPartnerComboboxOpen, setIsPartnerComboboxOpen] = useState(false);
+  const [editPaymentFormData, setEditPaymentFormData] = useState({
+    id: "",
+    invoiceNo: "",
+    memberName: "",
+    category: "",
+    amount: 0,
+    paidAmount: 0,
+    balanceDue: 0,
+    paymentDate: "",
+    dueDate: "",
+    includeAdmissionFee: false,
+    partnerMemberId: null as string | null,
+  });
+
+  const handleOpenEditPaymentModal = (pay: PaymentRecord) => {
+    const totAmount = Number(pay.amount) || 0;
+    const pAmount = pay.paidAmount !== undefined && pay.paidAmount !== null ? Number(pay.paidAmount) : totAmount;
+    const bal = pay.balanceDue !== undefined && pay.balanceDue !== null ? Number(pay.balanceDue) : Math.max(0, totAmount - pAmount);
+
+    const cat = pay.category || "Monthly Fee";
+    const pkg = gymPackages.find((p) => p.name === cat);
+    const basePkgPrice = cat === "Admission Fee" ? 1500 : (pkg ? pkg.price : 3500);
+
+    const isAdmissionIncluded = cat !== "Admission Fee" && (totAmount - basePkgPrice >= 1400 || !!pay.itemDescription?.toLowerCase().includes("admission"));
+
+    const realDbUuid = pay.dbUuid || (pay.id && !pay.id.startsWith("PAY-") ? pay.id : undefined);
+    const resolvedPartnerId = pay.partnerMemberId || pay.partner_member_id || null;
+
+    const partnerMem = resolvedPartnerId
+      ? members.find((m) => m.id === resolvedPartnerId || m.dbUuid === resolvedPartnerId || (m as any).member_id === resolvedPartnerId)
+      : null;
+    const resolvedPartnerUuid = partnerMem?.dbUuid || (partnerMem?.id && partnerMem.id.includes("-") ? partnerMem.id : (resolvedPartnerId && resolvedPartnerId.includes("-") ? resolvedPartnerId : null));
+
+    setPartnerComboboxQuery(partnerMem ? `${partnerMem.name} (${partnerMem.id})` : "");
+    setIsPartnerComboboxOpen(false);
+
+    setEditingPaymentRecord(pay);
+    setEditPaymentFormData({
+      id: realDbUuid || pay.id,
+      invoiceNo: pay.invoiceNo || "",
+      memberName: pay.memberName || "Member",
+      category: cat,
+      amount: totAmount,
+      paidAmount: pAmount,
+      balanceDue: bal,
+      paymentDate: pay.paymentDate || new Date().toISOString().split("T")[0],
+      dueDate: pay.dueDate || new Date().toISOString().split("T")[0],
+      includeAdmissionFee: isAdmissionIncluded,
+      partnerMemberId: resolvedPartnerUuid || resolvedPartnerId,
+    });
+    setIsEditPaymentModalOpen(true);
+  };
+
+  const handleSaveEditPayment = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    const targetUuid = editingPaymentRecord?.dbUuid || (editingPaymentRecord?.id && !editingPaymentRecord.id.startsWith("PAY-") ? editingPaymentRecord.id : (editPaymentFormData.id && !editPaymentFormData.id.startsWith("PAY-") ? editPaymentFormData.id : null));
+    const targetInvoiceNo = editingPaymentRecord?.invoiceNo || editPaymentFormData.invoiceNo;
+
+    if (!targetUuid && !targetInvoiceNo) {
+      console.error("No payment UUID or Invoice No provided for edit.");
+      alert("Error: No payment identifier selected for editing.");
+      return;
+    }
+
+    const totAmount = Number(editPaymentFormData.amount) || 0;
+    const pAmount = Number(editPaymentFormData.paidAmount) || 0;
+    const calculatedBalance = Math.max(0, totAmount - pAmount);
+
+    const todayStr = new Date().toISOString().split("T")[0];
+    const calculatedStatus: "Paid" | "Due Soon" | "Overdue" = calculatedBalance <= 0
+      ? "Paid"
+      : (editPaymentFormData.dueDate && editPaymentFormData.dueDate < todayStr ? "Overdue" : "Due Soon");
+
+    // Ensure partner_member_id sent to Supabase is strictly a UUID or null (never display string like MEM158)
+    let partnerUuidToSave: string | null = editPaymentFormData.partnerMemberId || null;
+    if (partnerUuidToSave && !partnerUuidToSave.includes("-")) {
+      const matchedMem = members.find((m) => m.id === partnerUuidToSave || (m as any).member_id === partnerUuidToSave);
+      partnerUuidToSave = matchedMem?.dbUuid || (matchedMem?.id && matchedMem.id.includes("-") ? matchedMem.id : null);
+    }
+
+    const updatePayload: any = {
+      amount: totAmount,
+      paid_amount: pAmount,
+      balance_due: calculatedBalance,
+      payment_date: editPaymentFormData.paymentDate,
+      next_due_date: editPaymentFormData.dueDate,
+      payment_type: editPaymentFormData.category,
+      partner_member_id: partnerUuidToSave,
+    };
+
+    let updateSuccess = false;
+
     try {
-      // Execute Supabase delete query FIRST
-      const { error } = await supabase.from("payments").delete().eq("id", id);
-      if (error) {
-        alert(`Failed to delete payment: ${error.message}`);
+      let query = supabase.from("payments").update(updatePayload);
+      if (targetUuid) {
+        query = query.eq("id", targetUuid);
+      } else if (targetInvoiceNo) {
+        query = query.eq("invoice_no", targetInvoiceNo);
+      } else {
+        query = query.eq("id", editPaymentFormData.id);
+      }
+
+      let { data, error } = await query.select();
+
+      if (error && error.message.includes("payment_type")) {
+        console.warn("Supabase UPDATE notice: payment_type column not found, trying category:", error.message);
+        delete updatePayload.payment_type;
+        updatePayload.category = editPaymentFormData.category;
+
+        let retryQuery = supabase.from("payments").update(updatePayload);
+        if (targetUuid) {
+          retryQuery = retryQuery.eq("id", targetUuid);
+        } else if (targetInvoiceNo) {
+          retryQuery = retryQuery.eq("invoice_no", targetInvoiceNo);
+        } else {
+          retryQuery = retryQuery.eq("id", editPaymentFormData.id);
+        }
+
+        const retry1 = await retryQuery.select();
+        data = retry1.data;
+        error = retry1.error;
+      }
+
+      if (!error) {
+        updateSuccess = true;
+      } else {
+        console.error("❌ Supabase UPDATE error:", error.message, error);
+        alert(`⚠️ Failed to update payment in database: ${error.message}`);
         return;
       }
-      // Update local state and refresh dashboard data
-      setPaymentRecords((prev) => prev.filter((p) => p.id !== id));
+    } catch (err: any) {
+      console.error("❌ Exception during Supabase payment update:", err?.message || err, err);
+      alert(`⚠️ Unexpected error updating payment: ${err?.message || err}`);
+      return;
+    }
+
+    if (!updateSuccess) return;
+
+    // 2. Synchronize both primary member and linked partner member in Supabase `members` table
+    const memberIdToSync = editingPaymentRecord?.memberId;
+    const partnerIdToSync = editPaymentFormData.partnerMemberId || partnerUuidToSave || null;
+    const nextDueDate = editPaymentFormData.dueDate;
+    const categoryTier = editPaymentFormData.category;
+
+    const syncPromises: Promise<any>[] = [];
+
+    // Primary member update promise
+    if (memberIdToSync && memberIdToSync !== "WALK_IN" && memberIdToSync !== "NULL") {
+      const primaryTask = (async () => {
+        try {
+          const memberUpdatePayload: any = {
+            expiry_date: nextDueDate,
+            due_date: nextDueDate,
+            status: "Active",
+            tier: categoryTier,
+          };
+
+          const { error: memErr } = await supabase
+            .from("members")
+            .update(memberUpdatePayload)
+            .or(`id.eq.${memberIdToSync},member_id.eq.${memberIdToSync}`);
+
+          if (memErr) {
+            console.warn("Supabase primary member update notice, retrying core fields:", memErr.message);
+            await supabase
+              .from("members")
+              .update({ expiry_date: nextDueDate, status: "Active" })
+              .or(`id.eq.${memberIdToSync},member_id.eq.${memberIdToSync}`);
+          }
+        } catch (mErr) {
+          console.error("❌ Failed to synchronize primary member in members table:", mErr);
+        }
+      })();
+      syncPromises.push(primaryTask);
+    }
+
+    // Partner member update promise (if partner_member_id is present)
+    if (partnerIdToSync) {
+      const partnerTask = (async () => {
+        try {
+          const partnerUpdatePayload: any = {
+            expiry_date: nextDueDate,
+            due_date: nextDueDate,
+            status: "Active",
+            tier: categoryTier,
+          };
+
+          const { error: pErr } = await supabase
+            .from("members")
+            .update(partnerUpdatePayload)
+            .or(`id.eq.${partnerIdToSync},member_id.eq.${partnerIdToSync}`);
+
+          if (pErr) {
+            console.warn("Supabase partner member update notice, retrying core fields:", pErr.message);
+            await supabase
+              .from("members")
+              .update({ expiry_date: nextDueDate, status: "Active" })
+              .or(`id.eq.${partnerIdToSync},member_id.eq.${partnerIdToSync}`);
+          }
+        } catch (pErr) {
+          console.error("❌ Failed to synchronize partner member in members table:", pErr);
+        }
+      })();
+      syncPromises.push(partnerTask);
+    }
+
+    // Ensure both member updates complete successfully via Promise.all
+    if (syncPromises.length > 0) {
+      await Promise.all(syncPromises);
+    }
+
+    // Simultaneously update local members React state array for both primary member & partner member
+    setMembers((prev) =>
+      prev.map((m) => {
+        const isPrimary = memberIdToSync && (m.id === memberIdToSync || m.memberId === memberIdToSync || m.dbUuid === memberIdToSync);
+        const isPartner = partnerIdToSync && (m.id === partnerIdToSync || m.memberId === partnerIdToSync || m.dbUuid === partnerIdToSync);
+        if (isPrimary || isPartner) {
+          return {
+            ...m,
+            expiryDate: nextDueDate,
+            expiry_date: nextDueDate,
+            due_date: nextDueDate,
+            status: "Active",
+            tier: categoryTier,
+          };
+        }
+        return m;
+      })
+    );
+
+    // 3. Immediately update local paymentRecords state array
+    setPaymentRecords((prev) =>
+      prev.map((rec) =>
+        rec.id === targetUuid || rec.dbUuid === targetUuid || rec.id === editPaymentFormData.id || rec.invoiceNo === editPaymentFormData.invoiceNo
+          ? {
+              ...rec,
+              amount: totAmount,
+              paidAmount: pAmount,
+              balanceDue: calculatedBalance,
+              paymentDate: editPaymentFormData.paymentDate,
+              dueDate: editPaymentFormData.dueDate,
+              category: editPaymentFormData.category,
+              status: calculatedStatus,
+              partnerMemberId: editPaymentFormData.partnerMemberId || null,
+              partner_member_id: editPaymentFormData.partnerMemberId || null,
+            }
+          : rec
+      )
+    );
+
+    // 4. Refresh page data via App Router refresh
+    try {
+      router.refresh();
+    } catch (rErr) {
+      console.log("Router refresh notice:", rErr);
+    }
+
+    // 5. Close modal ONLY upon successful database update
+    setIsEditPaymentModalOpen(false);
+    setEditingPaymentRecord(null);
+  };
+
+  // Helper to subtract months safely from a date string
+  const subtractMonthsFromDateStr = (dateStr: string, monthsToSubtract: number): string => {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    const expectedMonth = (date.getMonth() - monthsToSubtract) % 12;
+    date.setMonth(date.getMonth() - monthsToSubtract);
+    if (date.getMonth() !== (expectedMonth < 0 ? expectedMonth + 12 : expectedMonth)) {
+      date.setDate(0); // Snap to last day of previous month if day overflow occurs
+    }
+    return date.toISOString().split("T")[0];
+  };
+
+  // Delete single payment record: Revert primary & partner member expiry_dates & status in `members` table FIRST, then delete payment
+  const handleDeletePayment = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this payment record?\n\nThis will revert the member's (and partner's, if linked) expiry date and active status back.")) return;
+
+    try {
+      // 1. Fetch Payment Details First
+      let targetPay = paymentRecords.find((p) => p.id === id || p.invoiceNo === id || p.dbUuid === id);
+      let payDbRecord: any = null;
+
+      const targetUuid = targetPay?.dbUuid || (id && !id.startsWith("PAY-") ? id : null);
+
+      let fetchQuery = supabase.from("payments").select("*");
+      if (targetUuid) {
+        fetchQuery = fetchQuery.eq("id", targetUuid);
+      } else if (targetPay?.invoiceNo) {
+        fetchQuery = fetchQuery.eq("invoice_no", targetPay.invoiceNo);
+      } else {
+        fetchQuery = fetchQuery.eq("id", id);
+      }
+
+      const { data: fetchedPayData } = await fetchQuery.maybeSingle();
+      if (fetchedPayData) {
+        payDbRecord = fetchedPayData;
+      }
+
+      const memberIdToSync = targetPay?.memberId || payDbRecord?.member_id;
+      const primaryMemObj = members.find((m) => m.id === memberIdToSync || m.memberId === memberIdToSync || m.dbUuid === memberIdToSync);
+      const partnerIdToSync = targetPay?.partnerMemberId || targetPay?.partner_member_id || payDbRecord?.partner_member_id || payDbRecord?.partnerMemberId || primaryMemObj?.partnerMemberId || primaryMemObj?.partner_member_id || null;
+      const categoryStr = targetPay?.category || payDbRecord?.category || payDbRecord?.payment_type || "";
+
+      // Determine duration in months
+      let durationMonths = payDbRecord?.duration_months || payDbRecord?.durationMonths || 1;
+      if (categoryStr) {
+        const lowerCat = categoryStr.toLowerCase();
+        if (lowerCat.includes("12 month") || lowerCat.includes("1 year") || lowerCat.includes("annual")) durationMonths = 12;
+        else if (lowerCat.includes("6 month")) durationMonths = 6;
+        else if (lowerCat.includes("3 month")) durationMonths = 3;
+        else if (lowerCat.includes("2 month")) durationMonths = 2;
+      }
+
+      const todayStr = new Date().toISOString().split("T")[0];
+
+      // Helper function to revert a member's expiry_date & status
+      const revertMemberExpiry = async (memId: string, monthsToSub: number) => {
+        if (!memId || memId === "WALK_IN" || memId === "NULL") return;
+
+        let currentExpiryStr: string | null = null;
+        const localMem = members.find((m) => m.id === memId || m.memberId === memId || m.dbUuid === memId);
+
+        if (localMem?.expiryDate || localMem?.expiry_date) {
+          currentExpiryStr = localMem.expiryDate || localMem.expiry_date || null;
+        } else {
+          const { data: dbMem } = await supabase
+            .from("members")
+            .select("expiry_date")
+            .or(`id.eq.${memId},member_id.eq.${memId}`)
+            .maybeSingle();
+          if (dbMem?.expiry_date) {
+            currentExpiryStr = dbMem.expiry_date;
+          }
+        }
+
+        // Check if member has other remaining payments in DB (excluding this deleted payment)
+        let remainingPaymentsCount = 0;
+        try {
+          let countQuery = supabase
+            .from("payments")
+            .select("id", { count: "exact", head: true });
+
+          if (targetUuid) {
+            countQuery = countQuery.neq("id", targetUuid);
+          } else if (targetPay?.invoiceNo || payDbRecord?.invoice_no) {
+            countQuery = countQuery.neq("invoice_no", targetPay?.invoiceNo || payDbRecord?.invoice_no);
+          } else {
+            countQuery = countQuery.neq("id", id);
+          }
+
+          const { count } = await countQuery.or(`member_id.eq.${memId},partner_member_id.eq.${memId}`);
+          remainingPaymentsCount = count || 0;
+        } catch (cntErr) {
+          console.warn("Notice checking remaining member payments:", cntErr);
+        }
+
+        let newExpiryStr: string | null = null;
+        let newStatus: "Active" | "Inactive" = "Inactive";
+
+        if (remainingPaymentsCount === 0) {
+          // If this was their only payment, set expiry_date to null and status to Inactive
+          newExpiryStr = null;
+          newStatus = "Inactive";
+        } else if (currentExpiryStr) {
+          newExpiryStr = subtractMonthsFromDateStr(currentExpiryStr, monthsToSub);
+          newStatus = newExpiryStr && newExpiryStr > todayStr ? "Active" : "Inactive";
+        } else {
+          newExpiryStr = null;
+          newStatus = "Inactive";
+        }
+
+        // Execute member revert update strictly BEFORE deleting payment record
+        const memberRollbackPayload: any = {
+          expiry_date: newExpiryStr,
+          due_date: newExpiryStr,
+          status: newStatus,
+        };
+
+        const { error: memRevertErr } = await supabase
+          .from("members")
+          .update(memberRollbackPayload)
+          .or(`id.eq.${memId},member_id.eq.${memId}`);
+
+        if (memRevertErr) {
+          console.warn(`Supabase member revert notice for ${memId}:`, memRevertErr.message);
+          await supabase
+            .from("members")
+            .update({ expiry_date: newExpiryStr, status: newStatus })
+            .or(`id.eq.${memId},member_id.eq.${memId}`);
+        }
+
+        // Simultaneously update local members React state array
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.id === memId || m.memberId === memId || m.dbUuid === memId
+              ? {
+                  ...m,
+                  expiryDate: newExpiryStr || "",
+                  expiry_date: newExpiryStr,
+                  due_date: newExpiryStr,
+                  status: newStatus,
+                }
+              : m
+          )
+        );
+      };
+
+      // 2. Revert Primary Member
+      if (memberIdToSync) {
+        await revertMemberExpiry(memberIdToSync, durationMonths);
+      }
+
+      // 3. Revert Partner Member (If Applicable)
+      if (partnerIdToSync) {
+        await revertMemberExpiry(partnerIdToSync, durationMonths);
+      }
+
+      // 4. Execute Supabase delete query on `payments` table ONLY AFTER member profiles are updated
+      let delQuery = supabase.from("payments").delete();
+      if (targetUuid) {
+        delQuery = delQuery.eq("id", targetUuid);
+      } else if (targetPay?.invoiceNo || payDbRecord?.invoice_no) {
+        delQuery = delQuery.eq("invoice_no", targetPay?.invoiceNo || payDbRecord?.invoice_no);
+      } else {
+        delQuery = delQuery.eq("id", id);
+      }
+
+      const { error: delErr } = await delQuery;
+      if (delErr) {
+        console.error("❌ Failed to delete payment from Supabase:", delErr.message, delErr);
+        alert(`Failed to delete payment: ${delErr.message}`);
+        return;
+      }
+
+      // 5. Immediately update local paymentRecords state array & refresh App Router / financial data
+      setPaymentRecords((prev) => prev.filter((p) => p.id !== id && p.invoiceNo !== targetPay?.invoiceNo && p.dbUuid !== targetUuid));
+      localStorage.removeItem("igym_cache_payments");
+      localStorage.removeItem("igym_saved_payments");
+
+      try {
+        router.refresh();
+      } catch (rErr) {}
       await fetchFinancialData();
     } catch (err: any) {
+      console.error("Error deleting payment:", err);
       alert(`Error deleting payment: ${err?.message || err}`);
     }
+  };
+
+  // Action: Open Record Payment Modal for specific Member (e.g. from Inactive Members modal)
+  const handleOpenRecordPaymentForMember = (m: Member) => {
+    const newCat = m.tier && gymPackages.some((p) => p.name === m.tier) ? m.tier : paymentFormData.category;
+    const calc = calculatePaymentAmount(newCat, paymentFormData.durationMonths);
+    const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
+
+    setPaymentFormData((prev) => ({
+      ...prev,
+      memberId: m.id,
+      category: newCat,
+      amount: finalAmt,
+      paidAmount: finalAmt,
+    }));
+    setMemberComboboxQuery(`${m.name} (${m.id})`);
+    setIsMemberComboboxOpen(false);
+    setIsInactiveMembersModalOpen(false);
+    setIsRecordPaymentModalOpen(true);
   };
 
   // Action: Send Automated WhatsApp / SMS Reminder
@@ -2867,12 +3502,83 @@ export default function Home() {
     }
   };
 
+  // Action: Clear Balance for pending payment records
+  const handleClearBalance = async (pay: PaymentRecord) => {
+    const todayStr = new Date().toISOString().split("T")[0];
+    const totalAmount = Number(pay.amount) || 0;
+
+    // 1. Instantly update local paymentRecords React state so the item disappears from pending modal list immediately
+    setPaymentRecords((prev) =>
+      prev.map((rec) =>
+        rec.id === pay.id || rec.invoiceNo === pay.invoiceNo
+          ? {
+              ...rec,
+              paidAmount: totalAmount,
+              balanceDue: 0,
+              paymentDate: todayStr,
+              status: "Paid" as const,
+            }
+          : rec
+      )
+    );
+
+    // 2. Execute Supabase UPDATE query for specific payment row
+    try {
+      const updatePayload = {
+        paid_amount: totalAmount,
+        balance_due: 0,
+        payment_date: todayStr,
+      };
+
+      const { error: updErr } = await supabase
+        .from("payments")
+        .update(updatePayload)
+        .eq("id", pay.id);
+
+      if (updErr) {
+        console.error("❌ Supabase clear balance update error:", updErr.message, updErr);
+        alert(`⚠️ Failed to update payment balance in database: ${updErr.message}`);
+        return;
+      }
+
+      // Also update member's expiry_date in members DB table if member payment
+      if (pay.memberId && pay.memberId !== "WALK_IN") {
+        const nextMonth = new Date();
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        const dueStr = nextMonth.toISOString().split("T")[0];
+
+        await supabase
+          .from("members")
+          .update({ expiry_date: dueStr, due_date: dueStr, status: "Active" })
+          .or(`id.eq.${pay.memberId},member_id.eq.${pay.memberId}`);
+
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.id === pay.memberId || m.memberId === pay.memberId || m.dbUuid === pay.memberId
+              ? { ...m, expiryDate: dueStr, expiry_date: dueStr, status: "Active" }
+              : m
+          )
+        );
+      }
+
+      // 3. Refresh App Router data
+      try {
+        router.refresh();
+      } catch (rErr) {}
+    } catch (err: any) {
+      console.error("❌ Exception clearing balance:", err);
+      alert(`⚠️ Unexpected error clearing balance: ${err?.message || err}`);
+    }
+  };
+
   // Action: Mark Pending / Overdue as Paid
   const handleMarkAsPaid = async (payId: string) => {
     const todayStr = new Date().toISOString().split("T")[0];
     const nextMonth = new Date();
     nextMonth.setMonth(nextMonth.getMonth() + 1);
     const dueStr = nextMonth.toISOString().split("T")[0];
+
+    const targetPay = paymentRecords.find((p) => p.id === payId);
 
     const updated = paymentRecords.map((rec) =>
       rec.id === payId
@@ -2881,70 +3587,58 @@ export default function Home() {
             status: "Paid" as const,
             paymentDate: todayStr,
             dueDate: dueStr,
+            paidAmount: rec.amount,
+            balanceDue: 0,
           }
         : rec
     );
     setPaymentRecords(updated);
 
     try {
-      const { error: pErr } = await supabase
-        .from("payments")
-        .update({ status: "Paid", payment_date: todayStr, due_date: dueStr })
-        .eq("id", payId);
+      const payPayload: any = {
+        payment_date: todayStr,
+        next_due_date: dueStr,
+        balance_due: 0,
+      };
+
+      const targetUuid = targetPay?.dbUuid || (payId && !payId.startsWith("PAY-") ? payId : null);
+      let markQuery = supabase.from("payments").update(payPayload);
+      if (targetUuid) {
+        markQuery = markQuery.eq("id", targetUuid);
+      } else if (targetPay?.invoiceNo) {
+        markQuery = markQuery.eq("invoice_no", targetPay.invoiceNo);
+      } else {
+        markQuery = markQuery.eq("id", payId);
+      }
+
+      const { error: pErr } = await markQuery;
 
       if (pErr) {
-        const targetPay = paymentRecords.find((p) => p.id === payId);
-        if (targetPay) {
-          await supabase
-            .from("payments")
-            .update({ status: "Paid", payment_date: todayStr, due_date: dueStr })
-            .eq("invoice_no", targetPay.invoiceNo);
-        }
+        console.error("❌ Failed to update payment in handleMarkAsPaid:", pErr.message, pErr);
       }
+
+      // Simultaneously update corresponding member's expiry_date in members DB table
+      const memberIdToSync = targetPay?.memberId;
+      if (memberIdToSync && memberIdToSync !== "WALK_IN") {
+        await supabase
+          .from("members")
+          .update({ expiry_date: dueStr, due_date: dueStr, status: "Active" })
+          .or(`id.eq.${memberIdToSync},member_id.eq.${memberIdToSync}`);
+
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.id === memberIdToSync || m.memberId === memberIdToSync || m.dbUuid === memberIdToSync
+              ? { ...m, expiryDate: dueStr, expiry_date: dueStr, status: "Active" }
+              : m
+          )
+        );
+      }
+
+      try {
+        router.refresh();
+      } catch (rErr) {}
     } catch (err) {
       console.log("Supabase payment update notice:", err);
-    }
-  };
-
-  // Clear all payment records permanently from Supabase DB & system
-  const handleClearAllPayments = async () => {
-    if (
-      !confirm(
-        "⚠️ ARE YOU SURE YOU WANT TO CLEAR ALL PAYMENT LOGS?\n\nThis will delete all current payment records permanently from the system & database."
-      )
-    ) {
-      return;
-    }
-
-    try {
-      // 1. Delete all records from Supabase payments table permanently
-      const { error: delErr1 } = await supabase
-        .from("payments")
-        .delete()
-        .neq("id", "00000000-0000-0000-0000-000000000000");
-
-      if (delErr1) {
-        console.warn("Neq UUID delete notice, retrying not null delete:", delErr1.message);
-        await supabase.from("payments").delete().not("id", "is", null);
-      }
-
-      // 2. Also delete records from payment_history table
-      try {
-        await supabase
-          .from("payment_history")
-          .delete()
-          .neq("member_id", "00000000-0000-0000-0000-000000000000");
-      } catch (hErr) {}
-
-      // 3. Clear local state and localStorage ONLY after DB delete executes
-      setPaymentRecords([]);
-      try {
-        localStorage.removeItem("igym_saved_payments");
-        safeSetLocalStorage("igym_payments_cleared", "true");
-      } catch (e) {}
-    } catch (err) {
-      console.error("Supabase clear payments error:", err);
-      setPaymentRecords([]);
     }
   };
 
@@ -3045,7 +3739,10 @@ export default function Home() {
       return;
     }
 
-    const totalGrossRevenue = filtered.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const totalGrossRevenue = filtered.reduce(
+      (sum, p) => sum + (Number(p.paidAmount !== undefined && p.paidAmount !== null ? p.paidAmount : p.amount) || 0),
+      0
+    );
     const totalCashPayments = filtered
       .filter((p) => p.method === "Cash")
       .reduce((sum, p) => sum + (Number(p.paidAmount ?? p.amount) || 0), 0);
@@ -3386,24 +4083,30 @@ export default function Home() {
     };
 
     // 2. Asynchronously INSERT into Supabase `payments` table
+    let insertedDbUuid: string | undefined = undefined;
     let isInserted = false;
     try {
-      const { error: dbErr } = await supabase.from("payments").insert([fullPayload]);
+      const { data: insData, error: dbErr } = await supabase.from("payments").insert([fullPayload]).select();
 
       if (dbErr) {
         console.warn("Full payment insert error, retrying base payload:", dbErr.message);
-        const { error: baseErr } = await supabase.from("payments").insert([basePayload]);
+        const { data: baseInsData, error: baseErr } = await supabase.from("payments").insert([basePayload]).select();
 
         if (baseErr) {
           const fallbackPayload = { ...basePayload, member_id: memberIdForDb, recorded_by: recordedByRole };
-          const { error: fallbackErr } = await supabase.from("payments").insert([fallbackPayload]);
+          const { data: fbData, error: fallbackErr } = await supabase.from("payments").insert([fallbackPayload]).select();
 
           if (fallbackErr) {
             console.error("Supabase Payment Insert Error:", fallbackErr);
             alert(`⚠️ Could not save payment to database: ${fallbackErr.message}`);
             return;
           }
+          if (fbData && fbData[0]) insertedDbUuid = String(fbData[0].id);
+        } else if (baseInsData && baseInsData[0]) {
+          insertedDbUuid = String(baseInsData[0].id);
         }
+      } else if (insData && insData[0]) {
+        insertedDbUuid = String(insData[0].id);
       }
       isInserted = true;
     } catch (err: any) {
@@ -3428,39 +4131,72 @@ export default function Home() {
         console.log("payment_history insert notice:", histErr);
       }
 
-      // Update Member Expiry Date, Status & Package in Supabase & Local State
+      // Update Primary & Linked Partner Member Expiry Date, Status & Package in Supabase & Local State
       try {
+        const partnerIdToSync = mem?.partnerMemberId || mem?.partner_member_id || null;
+        const syncPromises: Promise<any>[] = [];
+
         const memberUpdateData: any = {
           expiry_date: resolvedDueDate,
+          due_date: resolvedDueDate,
           status: "Active",
           tier: resolvedCategory,
           package: resolvedCategory,
           membership_plan: resolvedCategory,
         };
 
-        const { error: updErr } = await supabase
-          .from("members")
-          .update(memberUpdateData)
-          .or(`id.eq.${memberIdForDb},member_id.eq.${resolvedMemberId}`);
-
-        if (updErr) {
-          // Fallback retry with core tier column
-          await supabase
+        // Primary member update promise
+        const primaryTask = (async () => {
+          const { error: updErr } = await supabase
             .from("members")
-            .update({
-              expiry_date: resolvedDueDate,
-              status: "Active",
-              tier: resolvedCategory,
-            })
+            .update(memberUpdateData)
             .or(`id.eq.${memberIdForDb},member_id.eq.${resolvedMemberId}`);
+
+          if (updErr) {
+            await supabase
+              .from("members")
+              .update({
+                expiry_date: resolvedDueDate,
+                due_date: resolvedDueDate,
+                status: "Active",
+                tier: resolvedCategory,
+              })
+              .or(`id.eq.${memberIdForDb},member_id.eq.${resolvedMemberId}`);
+          }
+        })();
+        syncPromises.push(primaryTask);
+
+        // Linked Partner member update promise
+        if (partnerIdToSync) {
+          const partnerTask = (async () => {
+            const { error: pUpdErr } = await supabase
+              .from("members")
+              .update({
+                expiry_date: resolvedDueDate,
+                due_date: resolvedDueDate,
+                status: "Active",
+                tier: resolvedCategory,
+              })
+              .or(`id.eq.${partnerIdToSync},member_id.eq.${partnerIdToSync}`);
+
+            if (pUpdErr) {
+              console.warn("Supabase partner update notice in record payment:", pUpdErr.message);
+            }
+          })();
+          syncPromises.push(partnerTask);
         }
 
+        await Promise.all(syncPromises);
+
         setMembers((prev) =>
-          prev.map((m) =>
-            m.id === resolvedMemberId || m.dbUuid === memberIdForDb
-              ? { ...m, expiryDate: resolvedDueDate, status: "Active", tier: resolvedCategory }
-              : m
-          )
+          prev.map((m) => {
+            const isPrimary = m.id === resolvedMemberId || m.dbUuid === memberIdForDb;
+            const isPartner = partnerIdToSync && (m.id === partnerIdToSync || m.memberId === partnerIdToSync || m.dbUuid === partnerIdToSync);
+            if (isPrimary || isPartner) {
+              return { ...m, expiryDate: resolvedDueDate, expiry_date: resolvedDueDate, due_date: resolvedDueDate, status: "Active", tier: resolvedCategory };
+            }
+            return m;
+          })
         );
       } catch (expUpdateErr) {
         console.error("⚠️ Failed to update member package/status:", expUpdateErr);
@@ -3470,6 +4206,7 @@ export default function Home() {
     // 4. Update local state ONLY AFTER successful Supabase insert
     const newPay: PaymentRecord = {
       id: generatedId,
+      dbUuid: insertedDbUuid,
       invoiceNo: generatedInvoice,
       memberId: resolvedMemberId,
       memberName: resolvedMemberName,
@@ -3806,7 +4543,7 @@ export default function Home() {
       weight: 70,
       targetWeight: "",
       tier: "Standard",
-      status: "Active",
+      status: "Inactive",
       emergencyContact: "",
       isPTMember: false,
       fitnessGoals: "Muscle Gain & Transformation",
@@ -3920,6 +4657,7 @@ export default function Home() {
   // Open Detail Modal
   const handleOpenDetailModal = (member: Member) => {
     setSelectedMember(member);
+    setShowDetailPaymentHistory(false);
     setIsDetailModalOpen(true);
   };
 
@@ -3980,7 +4718,7 @@ export default function Home() {
           height: formData.height !== "" && formData.height !== null && formData.height !== undefined ? Number(formData.height) : undefined,
           weight: formData.weight !== "" && formData.weight !== null && formData.weight !== undefined ? Number(formData.weight) : undefined,
           tier: formData.tier,
-          status: formData.status,
+          status: "Inactive",
           emergencyContact: formData.emergencyContact,
           isPTMember: formData.isPTMember,
           fitnessGoals: formData.fitnessGoals,
@@ -4019,7 +4757,7 @@ export default function Home() {
         startingWeight: Number(formData.weight),
         bmi: newBmi,
         tier: formData.tier,
-        status: formData.status,
+        status: "Inactive",
         lastVisit: "Just now",
         joinDate: new Date().toISOString().split("T")[0],
         durationMonths: durationMonths,
@@ -4220,33 +4958,85 @@ export default function Home() {
 
   const matchesPackageFilter = (member: Member, filter: string): boolean => {
     if (!filter || filter === "All Packages") return true;
-    const tierLower = (member.tier || "").toLowerCase().trim();
-    if (!tierLower) return false;
+    const tierRaw = (member.tier || "").trim();
+    if (!tierRaw) return false;
+    const tierLower = tierRaw.toLowerCase();
 
-    const hasTreadmill =
-      tierLower.includes("treadmill") ||
+    // Determine exact treadmill status safely (excluding "without")
+    const isWithoutTreadmill = tierLower.includes("without treadmill") || tierLower.includes("no treadmill") || tierLower.includes("without tr");
+    const isWithTreadmill = !isWithoutTreadmill && (
+      tierLower.includes("with treadmill") ||
       tierLower.includes("+ tr") ||
-      tierLower.includes("with treadmill");
+      tierLower.includes("+ treadmill") ||
+      (tierLower.includes("treadmill") && !tierLower.includes("without"))
+    );
 
     switch (filter) {
       case "Men":
-        return tierLower.includes("men") && !tierLower.includes("women") && !hasTreadmill;
+        return (
+          tierRaw === "Men (Without Treadmills)" ||
+          tierRaw === "Men" ||
+          (tierLower.includes("men") && !tierLower.includes("women") && !tierLower.includes("couple") && isWithoutTreadmill)
+        );
+
       case "Men + TR":
-        return tierLower.includes("men") && !tierLower.includes("women") && hasTreadmill;
+        return (
+          tierRaw === "Men (With Treadmills)" ||
+          tierRaw === "Men + TR" ||
+          (tierLower.includes("men") && !tierLower.includes("women") && !tierLower.includes("couple") && isWithTreadmill)
+        );
+
       case "Ladies":
-        return (tierLower.includes("ladies") || tierLower.includes("women")) && !hasTreadmill;
+        return (
+          tierRaw === "Ladies (Without Treadmills)" ||
+          tierRaw === "Ladies" ||
+          ((tierLower.includes("ladies") || tierLower.includes("women")) && !tierLower.includes("couple") && isWithoutTreadmill)
+        );
+
       case "Ladies + TR":
-        return (tierLower.includes("ladies") || tierLower.includes("women")) && hasTreadmill;
+        return (
+          tierRaw === "Ladies (With Treadmills)" ||
+          tierRaw === "Ladies + TR" ||
+          ((tierLower.includes("ladies") || tierLower.includes("women")) && !tierLower.includes("couple") && isWithTreadmill)
+        );
+
       case "Student":
-        return tierLower.includes("student") && !hasTreadmill;
+        return (
+          tierRaw === "Student (Without Treadmills)" ||
+          tierRaw === "Student" ||
+          tierRaw === "For Student" ||
+          (tierLower.includes("student") && isWithoutTreadmill) ||
+          (tierLower.includes("student") && !isWithTreadmill)
+        );
+
       case "Student + TR":
-        return tierLower.includes("student") && hasTreadmill;
+        return (
+          tierRaw === "Student (With Treadmills)" ||
+          tierRaw === "Student + TR" ||
+          (tierLower.includes("student") && isWithTreadmill)
+        );
+
       case "Couple":
-        return (tierLower.includes("couple") || tierLower.includes("family")) && !hasTreadmill;
+        return (
+          tierRaw === "Couple Package (Without Treadmills)" ||
+          tierRaw === "Couple (Without Treadmills)" ||
+          tierRaw === "Couple" ||
+          (tierLower.includes("couple") && isWithoutTreadmill)
+        );
+
       case "Couple + TR":
-        return (tierLower.includes("couple") || tierLower.includes("family")) && hasTreadmill;
+        return (
+          tierRaw === "Couple Package (With Treadmills)" ||
+          tierRaw === "Couple (With Treadmills)" ||
+          tierRaw === "Couple + TR" ||
+          (tierLower.includes("couple") && isWithTreadmill)
+        );
+
       case "PT / Custom":
         return (
+          tierRaw === "PT Fee" ||
+          tierRaw === "Personal Training" ||
+          tierRaw === "Admission Fee" ||
           tierLower.includes("personal training") ||
           tierLower.includes("pt") ||
           tierLower.includes("vip") ||
@@ -4254,8 +5044,9 @@ export default function Home() {
           tierLower.includes("admission") ||
           !!member.isPTMember
         );
+
       default:
-        return tierLower === filter.toLowerCase().trim() || tierLower.includes(filter.toLowerCase().trim());
+        return tierRaw === filter || tierLower === filter.toLowerCase();
     }
   };
 
@@ -4279,39 +5070,51 @@ export default function Home() {
     return matchesSearch && matchesStatus && matchesPkg;
   });
 
-  // Dynamic Chat Conversations list linked 100% to real Supabase members
-  const displayChatConversations: ChatConversation[] = members.map((m) => {
-    const cleanId = m.id.trim().toUpperCase().replace(/^MEM-/, "MEM");
-    const hyphenId = cleanId.replace(/^MEM/, "MEM-");
+  // Dynamic Chat Conversations list linked 100% to real Supabase members (Deduplicated)
+  const displayChatConversations: ChatConversation[] = (() => {
+    const seenKeys = new Set<string>();
+    const result: ChatConversation[] = [];
 
-    const existing = chatConversations.find(
-      (c) =>
-        c.memberId === m.id ||
-        c.memberId === cleanId ||
-        c.memberId === hyphenId ||
-        c.memberId.toUpperCase().replace(/^MEM-/, "MEM") === cleanId
-    );
-    if (existing) {
-      return {
-        ...existing,
-        memberId: m.id,
-        memberName: m.name,
-        phone: m.phone,
-        tier: m.tier,
-      };
-    }
-    return {
-      id: `CHAT-${m.id}`,
-      memberId: m.id,
-      memberName: m.name,
-      phone: m.phone,
-      tier: m.tier,
-      status: m.status === "Active" ? "Online" : "Offline",
-      lastActive: m.lastVisit || "Recently",
-      unreadCount: 0,
-      messages: [],
-    };
-  });
+    members.forEach((m) => {
+      const cleanId = (m.id || "").trim().toUpperCase().replace(/^MEM-/, "MEM");
+      const hyphenId = cleanId ? cleanId.replace(/^MEM/, "MEM-") : "";
+      const memberKey = cleanId || m.id || m.dbUuid;
+
+      if (!memberKey || seenKeys.has(memberKey)) return;
+      seenKeys.add(memberKey);
+
+      const existing = chatConversations.find(
+        (c) =>
+          c.memberId === m.id ||
+          c.memberId === cleanId ||
+          c.memberId === hyphenId ||
+          (c.memberId && c.memberId.toUpperCase().replace(/^MEM-/, "MEM") === cleanId)
+      );
+      if (existing) {
+        result.push({
+          ...existing,
+          memberId: m.id,
+          memberName: m.name,
+          phone: m.phone,
+          tier: m.tier,
+        });
+      } else {
+        result.push({
+          id: `CHAT-${m.id}`,
+          memberId: m.id,
+          memberName: m.name,
+          phone: m.phone,
+          tier: m.tier,
+          status: m.status === "Active" ? "Online" : "Offline",
+          lastActive: m.lastVisit || "Recently",
+          unreadCount: 0,
+          messages: [],
+        });
+      }
+    });
+
+    return result;
+  })();
 
   // Sort Conversations (WhatsApp-style):
   // 1. Members with messages come first, sorted by the created_at / createdAtMs timestamp of their LAST message (newest to oldest).
@@ -4340,6 +5143,12 @@ export default function Home() {
 
     return a.memberId.localeCompare(b.memberId, undefined, { numeric: true });
   });
+
+  // Sync total unread chat badge count for global sidebar navigation with displayChatConversations
+  useEffect(() => {
+    const totalUnread = displayChatConversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+    setUnreadChatBadgeCount(totalUnread);
+  }, [displayChatConversations]);
 
   return (
     <div className="flex h-screen w-full bg-[#07070a] text-zinc-100 font-sans overflow-hidden antialiased selection:bg-cyan-500 selection:text-black">
@@ -4892,8 +5701,10 @@ export default function Home() {
                         <span>
                           Rs.{" "}
                           {paymentRecords
-                            .filter((p) => p.status === "Paid")
-                            .reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
+                            .reduce(
+                              (sum, p) => sum + (Number(p.paidAmount !== undefined && p.paidAmount !== null ? p.paidAmount : p.amount) || 0),
+                              0
+                            )
                             .toLocaleString()}
                         </span>
                         <span className="text-[10px] font-semibold text-cyan-400 underline">Breakdown →</span>
@@ -5293,7 +6104,7 @@ export default function Home() {
                           key={item.id}
                           onClick={() => {
                             handleTabChange("Member Chat");
-                            setActiveChatMemberId(item.memberId);
+                            handleSelectChatConversation(item.memberId);
                           }}
                           className="bg-[#07090e] border border-zinc-800 hover:border-cyan-500/50 hover:bg-[#0c121d] rounded-xl p-3.5 flex flex-col justify-between gap-2.5 transition-all cursor-pointer group shadow-md"
                         >
@@ -5894,13 +6705,12 @@ export default function Home() {
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => {
-                    const initialMem = members[0];
-                    const initialCat = initialMem?.tier && gymPackages.some((p) => p.name === initialMem.tier) ? initialMem.tier : "Men (Without Treadmills)";
-                    const calc = calculatePaymentAmount(initialCat, 1);
+                    const defaultCat = "Men (Without Treadmills)";
+                    const calc = calculatePaymentAmount(defaultCat, 1);
                     setPaymentFormData({
-                      memberId: initialMem?.id || "",
+                      memberId: "",
                       externalPayerName: "",
-                      category: initialCat,
+                      category: defaultCat,
                       durationMonths: 1,
                       amount: calc.finalAmount,
                       paidAmount: calc.finalAmount,
@@ -5911,7 +6721,7 @@ export default function Home() {
                       itemDescription: "",
                       gymRevenuePercentage: 20,
                     });
-                    setMemberComboboxQuery(initialMem ? `${initialMem.name} (${initialMem.id})` : "");
+                    setMemberComboboxQuery("");
                     setIsMemberComboboxOpen(false);
                     setIsRecordPaymentModalOpen(true);
                   }}
@@ -5920,15 +6730,6 @@ export default function Home() {
                   <Plus className="w-4 h-4 stroke-[3]" /> Record Fee Payment
                 </button>
 
-                {currentUserRole !== "STAFF" && paymentViewTab === "INCOME" && paymentRecords.length > 0 && (
-                  <button
-                    onClick={handleClearAllPayments}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-500/40 text-red-400 font-bold text-xs transition-all whitespace-nowrap cursor-pointer shrink-0"
-                    title="Clear all payment records from database & system"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> Clear All Logs
-                  </button>
-                )}
 
                 {currentUserRole !== "STAFF" && paymentViewTab === "EXPENSES" && (
                   <button
@@ -5992,7 +6793,11 @@ export default function Home() {
                       </div>
                       <div className="mt-4">
                         <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight font-mono group-hover:text-lime-300 transition-colors">
-                          LKR {paymentRecords.filter((p) => p.status === "Paid").reduce((sum, p) => sum + (Number(p.gymRevenueAmount !== undefined ? p.gymRevenueAmount : p.amount) || 0), 0).toLocaleString()}
+                          LKR {paymentRecords.reduce((sum, p) => {
+                            const pAmt = p.paidAmount !== undefined && p.paidAmount !== null ? Number(p.paidAmount) : Number(p.amount);
+                            const gymPct = p.gymRevenuePercentage !== undefined && p.gymRevenuePercentage !== null ? Number(p.gymRevenuePercentage) : 100;
+                            return sum + pAmt * (gymPct / 100);
+                          }, 0).toLocaleString()}
                         </div>
                         <div className="text-xs text-lime-400/80 font-semibold uppercase tracking-wider mt-1">Gym Net Revenue (Post PT Split)</div>
                       </div>
@@ -6027,34 +6832,25 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Card 3: Overdue & Due Soon Pending */}
+                    {/* Card 3: Overdue & Pending Balances */}
                     {(() => {
-                      const pendingCountList = members.filter((m) => {
-                        const plan = (m.tier || "").toString().trim();
-                        const hasPlan = plan.length > 0 && plan !== "N/A" && plan.toLowerCase() !== "null";
-                        if (!hasPlan) return false;
-
-                        const expVal = m.expiry_date || m.expiryDate;
-                        if (!expVal) return false;
-                        const expDate = new Date(expVal);
-                        return !isNaN(expDate.getTime()) && expDate < new Date();
+                      const pendingBalanceRecords = paymentRecords.filter((p) => {
+                        const pAmt = p.paidAmount !== undefined && p.paidAmount !== null ? Number(p.paidAmount) : Number(p.amount);
+                        const bal = p.balanceDue !== undefined && p.balanceDue !== null ? Number(p.balanceDue) : Math.max(0, Number(p.amount) - pAmt);
+                        return bal > 0 || pAmt < Number(p.amount);
                       });
 
-                      const totalPendingAmt = pendingCountList.reduce((sum, m) => {
-                        const plan = (m.tier || "").toString().trim();
-                        const hasPlan = plan.length > 0 && plan !== "N/A" && plan.toLowerCase() !== "null";
-                        if (!hasPlan) return sum;
-
-                        const pkg = gymPackages.find((p) => (p.package_name || p.name) === m.tier || p.name === m.tier);
-                        const price = pkg ? Number(pkg.price) || 0 : 0;
-                        return sum + price;
+                      const totalPendingBal = pendingBalanceRecords.reduce((sum, p) => {
+                        const pAmt = p.paidAmount !== undefined && p.paidAmount !== null ? Number(p.paidAmount) : Number(p.amount);
+                        const bal = p.balanceDue !== undefined && p.balanceDue !== null ? Number(p.balanceDue) : Math.max(0, Number(p.amount) - pAmt);
+                        return sum + bal;
                       }, 0);
 
                       return (
                         <div
                           onClick={() => setIsPendingPaymentsModalOpen(true)}
                           className="bg-[#1c0f14] border border-pink-500/40 hover:border-pink-400 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-pink-950/20 cursor-pointer group transition-all transform hover:-translate-y-0.5"
-                          title="Click to view list of members with pending or overdue payments"
+                          title="Click to view list of payment records with pending balances"
                         >
                           <div className="flex items-center justify-between">
                             <div className="p-2.5 rounded-xl bg-pink-950/80 border border-pink-500/40 text-pink-400 group-hover:scale-110 transition-transform">
@@ -6064,31 +6860,49 @@ export default function Home() {
                           </div>
                           <div className="mt-4">
                             <div className="text-2xl sm:text-3xl font-extrabold text-pink-300 tracking-tight font-mono group-hover:text-pink-200 transition-colors">
-                              LKR {totalPendingAmt.toLocaleString()}
+                              LKR {totalPendingBal.toLocaleString()}
                             </div>
                             <div className="text-xs text-pink-400/80 font-semibold uppercase tracking-wider mt-1">
-                              {pendingCountList.length} Pending Overdue
+                              {pendingBalanceRecords.length} Pending Balances
                             </div>
                           </div>
                         </div>
                       );
                     })()}
 
-                    {/* Card 4: Automated Reminders Sent */}
-                    <div className="bg-[#18150d] border border-amber-500/30 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-amber-950/20">
-                      <div className="flex items-center justify-between">
-                        <div className="p-2.5 rounded-xl bg-amber-950/80 border border-amber-500/40 text-amber-400">
-                          <MessageSquare className="w-4 h-4" />
+                    {/* Card 4: Inactive Members */}
+                    {(() => {
+                      const inactiveMembersList = members.filter((m) => {
+                        const isStatusInactive = String(m.status || "").toLowerCase().trim() === "inactive";
+                        const expVal = m.expiry_date || m.expiryDate;
+                        const isExpiredDate = expVal ? new Date(expVal) < new Date() : false;
+                        const hasNoActivePackage = !m.tier || m.tier === "N/A" || String(m.tier).trim() === "";
+                        return isStatusInactive || isExpiredDate || hasNoActivePackage;
+                      });
+
+                      return (
+                        <div
+                          onClick={() => setIsInactiveMembersModalOpen(true)}
+                          className="bg-[#18130d] border border-amber-500/40 hover:border-amber-400 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-amber-950/20 cursor-pointer group transition-all transform hover:-translate-y-0.5"
+                          title="Click to view list of inactive and expired members"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="p-2.5 rounded-xl bg-amber-950/80 border border-amber-500/40 text-amber-400 group-hover:scale-110 transition-transform">
+                              <UserX className="w-4 h-4" />
+                            </div>
+                            <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">Action Needed</span>
+                          </div>
+                          <div className="mt-4">
+                            <div className="text-2xl sm:text-3xl font-extrabold text-amber-300 tracking-tight font-mono group-hover:text-amber-200 transition-colors">
+                              {inactiveMembersList.length} Inactive
+                            </div>
+                            <div className="text-xs text-amber-400/80 font-semibold uppercase tracking-wider mt-1">
+                              Expired or No Package
+                            </div>
+                          </div>
                         </div>
-                        <span className="text-xs font-bold text-purple-300 bg-purple-500/15 px-2.5 py-0.5 rounded-full border border-purple-500/30">In-App Sync</span>
-                      </div>
-                      <div className="mt-4">
-                        <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight font-mono">
-                          {paymentRecords.filter((p) => p.reminderSent).length} Receipts
-                        </div>
-                        <div className="text-xs text-amber-400/80 font-semibold uppercase tracking-wider mt-1">Routed via Member App Chat</div>
-                      </div>
-                    </div>
+                      );
+                    })()}
                   </section>
                 )}
 
@@ -6276,7 +7090,12 @@ export default function Home() {
                               const displayName = isWalkIn ? (pay.externalPayerName || pay.memberName || "Walk-in Guest / External Income") : pay.memberName;
 
                               return (
-                                <tr key={pay.id} className="hover:bg-zinc-800/40 transition-colors">
+                                <tr
+                                  key={pay.id}
+                                  onClick={() => handleOpenEditPaymentModal(pay)}
+                                  className="hover:bg-purple-950/20 cursor-pointer transition-colors"
+                                  title="Click to View/Edit payment details"
+                                >
                                   <td className="py-4 pl-2">
                                     <div>
                                       <span className="font-mono text-xs text-purple-300 font-bold">{pay.invoiceNo}</span>
@@ -6374,7 +7193,8 @@ export default function Home() {
                                   <td className="py-4 pr-2 text-right">
                                     <div className="flex items-center justify-end gap-1.5">
                                       <button
-                                        onClick={async () => {
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
                                           if (!pay.memberId) {
                                             alert("Digital App Chat receipt can only be sent to registered members.");
                                             return;
@@ -6403,7 +7223,7 @@ export default function Home() {
                                               await supabase
                                                 .from("payments")
                                                 .update({ receipt_sent: true, reminder_sent: true })
-                                                .or(`id.eq.${pay.id},invoice_no.eq.${pay.invoiceNo}`);
+                                                .eq("id", pay.id);
 
                                               alert(`✅ Digital Receipt for ${pay.invoiceNo} sent to Member App Chat!`);
                                             } else {
@@ -6419,15 +7239,42 @@ export default function Home() {
                                         <MessageCircle className="w-4 h-4" />
                                       </button>
                                       {pay.status !== "Paid" && (
-                                        <button onClick={() => handleMarkAsPaid(pay.id)} className="px-2.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-xs transition-colors shadow-md" title="Mark Payment as Received / Paid">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleMarkAsPaid(pay.id);
+                                          }}
+                                          className="px-2.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-xs transition-colors shadow-md"
+                                          title="Mark Payment as Received / Paid"
+                                        >
                                           Mark Paid
                                         </button>
                                       )}
-                                      <button onClick={() => alert(`Printing Invoice ${pay.invoiceNo} for ${pay.memberName}...`)} className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors" title="Print Receipt">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          alert(`Printing Invoice ${pay.invoiceNo} for ${pay.memberName}...`);
+                                        }}
+                                        className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors"
+                                        title="Print Receipt"
+                                      >
                                         <Printer className="w-4 h-4" />
                                       </button>
                                       <button
-                                        onClick={() => handleDeletePayment(pay.id)}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenEditPaymentModal(pay);
+                                        }}
+                                        className="p-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition-colors"
+                                        title="Edit Payment Record"
+                                      >
+                                        <Pencil className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeletePayment(pay.id);
+                                        }}
                                         className="p-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/40 transition-colors"
                                         title="Delete Payment Record"
                                       >
@@ -7487,20 +8334,14 @@ export default function Home() {
                       c.phone.includes(chatSearchQuery) ||
                       (c.tier || "").toLowerCase().includes(chatSearchQuery.toLowerCase())
                     )
-                    .map((conv) => {
+                    .map((conv, idx) => {
                       const isSelected = conv.memberId === activeChatMemberId;
                       const lastMsg = conv.messages[conv.messages.length - 1];
 
                       return (
                         <button
-                          key={conv.id}
-                          onClick={() => {
-                            setActiveChatMemberId(conv.memberId);
-                            setChatConversations((prev) =>
-                              prev.map((c) => (c.id === conv.id ? { ...c, unreadCount: 0 } : c))
-                            );
-                            setIsMobileChatView(true);
-                          }}
+                          key={`${conv.id || conv.memberId}-${idx}`}
+                          onClick={() => handleSelectChatConversation(conv.memberId, conv.id)}
                           className={`w-full text-left p-3.5 flex items-start gap-3 transition-all relative ${
                             isSelected
                               ? "bg-slate-800/70 border-l-4 border-teal-400 text-white"
@@ -8309,235 +9150,336 @@ export default function Home() {
 
               </div>
 
-              {/* RIGHT COLUMN: Analytical Fitness Progress, Glowing SVG Chart & Attendance */}
+              {/* RIGHT COLUMN: Analytical Fitness Progress / Payment History */}
               <div className="md:col-span-7 space-y-5">
                 
-                {/* Weight Trend Visual Chart Section */}
-                <div className="bg-[#121522] border border-cyan-500/30 rounded-2xl p-4.5 space-y-4 shadow-xl">
-                  
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <div className="flex items-center gap-2">
-                      <TrendingUp className="w-4 h-4 text-cyan-400" />
-                      <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">Weight Progress Analytics</h4>
-                    </div>
-                    <span className="text-[10px] font-mono font-semibold px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                      Live Trend Chart
-                    </span>
-                  </div>
-
-                  {/* Summary Cards */}
-                  <div className="grid grid-cols-3 gap-2.5 text-center">
-                    {(() => {
-                      const logs = weightLogsMap[selectedMember.id] || [];
-                      const hasLogs = logs.length > 0;
-                      // logs is sorted NEWEST FIRST: index 0 is Current Weight (most recent), index length-1 is Start Weight (first entry logged)
-                      const currentWeight = hasLogs ? logs[0].weight : null;
-                      const startWeight = hasLogs ? logs[logs.length - 1].weight : null;
-                      const diff = currentWeight !== null && startWeight !== null ? Number((currentWeight - startWeight).toFixed(1)) : null;
-
-                      return (
-                        <>
-                          <div className="bg-[#0b0d16] border border-zinc-800/80 rounded-xl p-2.5">
-                            <span className="text-[9px] text-zinc-400 uppercase font-semibold block">Start Weight</span>
-                            <span className="text-xs sm:text-sm font-black text-zinc-300 font-mono">
-                              {startWeight !== null ? `${startWeight} kg` : "N/A"}
-                            </span>
-                          </div>
-                          <div className="bg-[#0b0d16] border border-cyan-500/40 rounded-xl p-2.5">
-                            <span className="text-[9px] text-cyan-400 uppercase font-semibold block">Current Weight</span>
-                            <span className="text-xs sm:text-sm font-black text-cyan-300 font-mono">
-                              {currentWeight !== null ? `${currentWeight} kg` : "N/A"}
-                            </span>
-                          </div>
-                          <div className="bg-[#0b0d16] border border-zinc-800/80 rounded-xl p-2.5">
-                            <span className="text-[9px] text-zinc-400 uppercase font-semibold block">Overall Change</span>
-                            {diff !== null ? (
-                              diff < 0 ? (
-                                <span className="text-xs font-bold text-lime-400 font-mono">📉 {Math.abs(diff)} kg Loss</span>
-                              ) : diff > 0 ? (
-                                <span className="text-xs font-bold text-cyan-400 font-mono">📈 +{diff} kg Gain</span>
-                              ) : (
-                                <span className="text-xs font-bold text-zinc-400 font-mono">0.0 kg</span>
-                              )
-                            ) : (
-                              <span className="text-xs font-bold text-zinc-400 font-mono">N/A</span>
-                            )}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-
-                  {/* Glowing SVG Weight Trend Chart OR No Data Placeholder */}
-                  {(() => {
-                    const logs = weightLogsMap[selectedMember.id] || [];
-
-                    if (logs.length === 0) {
-                      return (
-                        <div className="bg-[#090b12] border border-cyan-900/30 rounded-xl p-8 text-center space-y-2">
-                          <Scale className="w-9 h-9 text-cyan-500/40 mx-auto opacity-70" />
-                          <h4 className="text-xs font-extrabold text-white tracking-wide">No weight data recorded yet.</h4>
-                          <p className="text-[11px] text-zinc-400 max-w-sm mx-auto">
-                            Recorded weight check-ins will automatically generate a line chart trend here.
-                          </p>
+                {showDetailPaymentHistory ? (
+                  /* Payment History Section */
+                  <div className="bg-[#13101f] border border-purple-500/50 rounded-2xl p-4 sm:p-4.5 space-y-4 shadow-xl animate-in fade-in zoom-in-95 duration-200">
+                    <div className="flex items-center justify-between border-b border-purple-500/30 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-purple-300 shrink-0">
+                          <Receipt className="w-4 h-4" />
                         </div>
-                      );
-                    }
-
-                    // Slice the last 12 chronological entries (most recent 12 entries) for the chart visual
-                    const recentLogs = logs.slice(0, 12);
-                    const chartLogs = [...recentLogs].reverse();
-
-                    const points = chartLogs.map((l) => ({
-                      date: l.date ? l.date.split("-").slice(1).join("/") : "Log",
-                      weight: Number(l.weight),
-                    }));
-
-                    const weights = points.map((p) => p.weight);
-                    const minW = Math.min(...weights) - 1.5;
-                    const maxW = Math.max(...weights) + 1.5;
-                    const range = maxW - minW || 1;
-
-                    const width = 450;
-                    const height = 130;
-                    const padX = 35;
-                    const padY = 25;
-
-                    const coords = points.map((p, i) => {
-                      const x = points.length === 1 ? width / 2 : padX + (i / (points.length - 1)) * (width - padX * 2);
-                      const y = height - padY - ((p.weight - minW) / range) * (height - padY * 2);
-                      return { x, y, ...p };
-                    });
-
-                    const lineD = coords.reduce((acc, pt, i) => (i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`), "");
-                    const fillD = points.length > 1
-                      ? `${lineD} L ${coords[coords.length - 1].x} ${height - padY} L ${coords[0].x} ${height - padY} Z`
-                      : "";
-
-                    // Calculate X-Axis tick label step to prevent text overlap
-                    const maxLabels = 6;
-                    const labelStep = Math.max(1, Math.ceil(coords.length / maxLabels));
-
-                    return (
-                      <div className="bg-[#090b12] border border-cyan-900/40 rounded-xl p-3 relative space-y-1 overflow-hidden">
-                        <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono px-1">
-                          <span>Weight Fluctuation (Recent {points.length} Check-ins)</span>
-                          <span className="text-cyan-400 font-bold">Total History: {logs.length} entries</span>
-                        </div>
-                        <div className="relative w-full h-[130px]">
-                          <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
-                            <defs>
-                              <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.35" />
-                                <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.0" />
-                              </linearGradient>
-                              <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                                <feGaussianBlur stdDeviation="3" result="blur" />
-                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                              </filter>
-                            </defs>
-
-                            {/* Horizontal Gridlines */}
-                            {[0.25, 0.5, 0.75].map((pct, idx) => (
-                              <line
-                                key={idx}
-                                x1={padX}
-                                y1={padY + pct * (height - padY * 2)}
-                                x2={width - padX}
-                                y2={padY + pct * (height - padY * 2)}
-                                stroke="#1e293b"
-                                strokeDasharray="3 3"
-                              />
-                            ))}
-
-                            {/* Area Gradient Fill */}
-                            {fillD && <path d={fillD} fill="url(#chartGradient)" />}
-
-                            {/* Glowing Line Stroke */}
-                            {lineD && points.length > 1 && (
-                              <path d={lineD} fill="none" stroke="#06b6d4" strokeWidth="2.5" filter="url(#glow)" strokeLinecap="round" strokeLinejoin="round" />
-                            )}
-
-                            {/* Interactive Point Nodes & Labels */}
-                            {coords.map((pt, i) => {
-                              const showDateLabel = i === 0 || i === coords.length - 1 || i % labelStep === 0;
-
-                              return (
-                                <g key={i} className="group cursor-pointer">
-                                  <circle cx={pt.x} cy={pt.y} r="4" fill="#0e111a" stroke="#22d3ee" strokeWidth="2.5" className="transition-transform group-hover:scale-150" />
-                                  <text x={pt.x} y={pt.y - 9} textAnchor="middle" fill="#22d3ee" fontSize="10" fontWeight="bold" className="font-mono">
-                                    {pt.weight}kg
-                                  </text>
-                                  {showDateLabel && (
-                                    <text x={pt.x} y={height - 4} textAnchor="middle" fill="#64748b" fontSize="8" fontWeight="bold">
-                                      {pt.date}
-                                    </text>
-                                  )}
-                                </g>
-                              );
-                            })}
-                          </svg>
+                        <div>
+                          <h4 className="text-xs font-extrabold text-white uppercase tracking-wider flex items-center gap-2">
+                            Member Payment History
+                          </h4>
+                          <p className="text-[10px] text-purple-300/80">Fee receipts, payments, and couple package records</p>
                         </div>
                       </div>
-                    );
-                  })()}
-
-                  {/* Add New Weight Check Form */}
-                  <div className="bg-[#0e111a] border border-zinc-800 rounded-xl p-3 space-y-2">
-                    <span className="text-[11px] font-bold text-zinc-300 block flex items-center gap-1.5">
-                      <Plus className="w-3.5 h-3.5 text-cyan-400" /> Record Weight Check-in
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        step="0.1"
-                        placeholder="kg"
-                        value={newLogWeight || ""}
-                        onChange={(e) => setNewLogWeight(Number(e.target.value))}
-                        className="w-24 bg-[#161a29] border border-zinc-800 rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Note e.g. Staff Monthly Check-in"
-                        value={newLogNote}
-                        onChange={(e) => setNewLogNote(e.target.value)}
-                        className="flex-1 bg-[#161a29] border border-zinc-800 rounded-lg px-2.5 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleAddWeightLog(selectedMember.id, selectedMember.height || 170)}
-                        className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs transition-all shadow-md shadow-cyan-500/20 shrink-0"
-                      >
-                        Save Check
-                      </button>
+                      <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-400/40">
+                        {detailMemberPayments.length} Records
+                      </span>
                     </div>
-                  </div>
 
-                  {/* Weight Logs Timeline */}
-                  <div className="space-y-1.5">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Weight Logs History</span>
-                    <div className="max-h-24 overflow-y-auto space-y-1.5 pr-1">
-                      {weightLogsMap[selectedMember.id] && weightLogsMap[selectedMember.id].length > 0 ? (
-                        weightLogsMap[selectedMember.id].map((log) => (
-                          <div key={log.id} className="flex items-center justify-between p-2 rounded-lg bg-[#0c0e17] border border-zinc-800/80 text-xs">
-                            <div className="flex items-center gap-2">
-                              <span className="text-zinc-500 font-mono text-[10px]">{log.date}</span>
-                              <span className="font-bold text-white font-mono">{log.weight} kg</span>
-                              <span className="text-[10px] text-zinc-400 font-mono">(BMI {log.bmi})</span>
+                    {isDetailPaymentsLoading ? (
+                      <div className="py-12 text-center space-y-2">
+                        <Loader2 className="w-6 h-6 animate-spin text-purple-400 mx-auto" />
+                        <p className="text-xs text-zinc-400 font-mono">Fetching payment records from Supabase...</p>
+                      </div>
+                    ) : detailMemberPayments.length > 0 ? (
+                      <div className="max-h-[380px] overflow-y-auto pr-1 space-y-2.5 custom-scrollbar">
+                        {detailMemberPayments.map((pay) => {
+                          const tot = Number(pay.amount) || 0;
+                          const paid = pay.paidAmount !== undefined && pay.paidAmount !== null ? Number(pay.paidAmount) : tot;
+                          const bal = pay.balanceDue !== undefined && pay.balanceDue !== null ? Number(pay.balanceDue) : Math.max(0, tot - paid);
+                          const isFullyPaid = bal <= 0;
+                          const isCouplePkg = !!(pay.partnerMemberId || pay.partner_member_id);
+
+                          return (
+                            <div
+                              key={pay.id}
+                              className={`p-3 rounded-xl border transition-all ${
+                                isFullyPaid
+                                  ? "bg-[#0c121e] border-emerald-500/30 hover:border-emerald-500/50"
+                                  : "bg-[#1f0f15] border-rose-500/40 hover:border-rose-500/60"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-xs font-extrabold text-white">{pay.category}</span>
+                                    {isCouplePkg && (
+                                      <span className="text-[9px] font-mono font-extrabold bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full border border-purple-400/40">
+                                        Couple Package 👥
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400 flex-wrap">
+                                    <span>Date: {pay.paymentDate}</span>
+                                    <span>•</span>
+                                    <span>Inv: {pay.invoiceNo}</span>
+                                    {pay.method && (
+                                      <>
+                                        <span>•</span>
+                                        <span className="text-purple-300">{pay.method}</span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Status Badges */}
+                                <div className="shrink-0">
+                                  {isFullyPaid ? (
+                                    <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-emerald-950/80 text-emerald-300 border border-emerald-500/50 inline-flex items-center gap-1 shadow-sm">
+                                      <CheckCircle className="w-3.5 h-3.5" /> Fully Paid
+                                    </span>
+                                  ) : (
+                                    <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-rose-950/80 text-rose-300 border border-rose-500/50 inline-flex items-center gap-1 shadow-sm font-mono">
+                                      <AlertTriangle className="w-3.5 h-3.5" /> Pending: LKR {bal.toLocaleString()}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Amount Breakdown Row */}
+                              <div className="mt-2.5 pt-2 border-t border-zinc-800/60 grid grid-cols-3 gap-2 text-center text-xs font-mono">
+                                <div className="bg-[#080a12] rounded-lg p-1.5 border border-zinc-800/60">
+                                  <span className="text-[9px] text-zinc-400 block uppercase font-bold">Total Amount</span>
+                                  <span className="font-bold text-white">LKR {tot.toLocaleString()}</span>
+                                </div>
+                                <div className="bg-[#080a12] rounded-lg p-1.5 border border-emerald-500/20">
+                                  <span className="text-[9px] text-emerald-400 block uppercase font-bold">Paid Amount</span>
+                                  <span className="font-bold text-emerald-300">LKR {paid.toLocaleString()}</span>
+                                </div>
+                                <div className={`bg-[#080a12] rounded-lg p-1.5 border ${bal > 0 ? "border-rose-500/40" : "border-zinc-800/60"}`}>
+                                  <span className={`text-[9px] block uppercase font-bold ${bal > 0 ? "text-rose-400" : "text-zinc-400"}`}>Balance Due</span>
+                                  <span className={`font-bold ${bal > 0 ? "text-rose-400" : "text-zinc-400"}`}>LKR {bal.toLocaleString()}</span>
+                                </div>
+                              </div>
                             </div>
-                            <span className="text-[10px] text-cyan-400 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800/60">
-                              {log.note || "Check-in"}
-                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="py-12 text-center space-y-2 bg-[#090812] rounded-xl border border-purple-900/30">
+                        <Receipt className="w-8 h-8 text-purple-500/40 mx-auto" />
+                        <p className="text-xs text-zinc-400 font-medium">No payment history recorded for this member yet.</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Weight Trend Visual Chart Section */
+                  <div className="bg-[#121522] border border-cyan-500/30 rounded-2xl p-4.5 space-y-4 shadow-xl">
+                    
+                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-cyan-400" />
+                        <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">Weight Progress Analytics</h4>
+                      </div>
+                      <span className="text-[10px] font-mono font-semibold px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                        Live Trend Chart
+                      </span>
+                    </div>
+
+                    {/* Summary Cards */}
+                    <div className="grid grid-cols-3 gap-2.5 text-center">
+                      {(() => {
+                        const logs = weightLogsMap[selectedMember.id] || [];
+                        const hasLogs = logs.length > 0;
+                        const currentWeight = hasLogs ? logs[0].weight : null;
+                        const startWeight = hasLogs ? logs[logs.length - 1].weight : null;
+                        const diff = currentWeight !== null && startWeight !== null ? Number((currentWeight - startWeight).toFixed(1)) : null;
+
+                        return (
+                          <>
+                            <div className="bg-[#0b0d16] border border-zinc-800/80 rounded-xl p-2.5">
+                              <span className="text-[9px] text-zinc-400 uppercase font-semibold block">Start Weight</span>
+                              <span className="text-xs sm:text-sm font-black text-zinc-300 font-mono">
+                                {startWeight !== null ? `${startWeight} kg` : "N/A"}
+                              </span>
+                            </div>
+                            <div className="bg-[#0b0d16] border border-cyan-500/40 rounded-xl p-2.5">
+                              <span className="text-[9px] text-cyan-400 uppercase font-semibold block">Current Weight</span>
+                              <span className="text-xs sm:text-sm font-black text-cyan-300 font-mono">
+                                {currentWeight !== null ? `${currentWeight} kg` : "N/A"}
+                              </span>
+                            </div>
+                            <div className="bg-[#0b0d16] border border-zinc-800/80 rounded-xl p-2.5">
+                              <span className="text-[9px] text-zinc-400 uppercase font-semibold block">Overall Change</span>
+                              {diff !== null ? (
+                                diff < 0 ? (
+                                  <span className="text-xs font-bold text-lime-400 font-mono">📉 {Math.abs(diff)} kg Loss</span>
+                                ) : diff > 0 ? (
+                                  <span className="text-xs font-bold text-cyan-400 font-mono">📈 +{diff} kg Gain</span>
+                                ) : (
+                                  <span className="text-xs font-bold text-zinc-400 font-mono">0.0 kg</span>
+                                )
+                              ) : (
+                                <span className="text-xs font-bold text-zinc-400 font-mono">N/A</span>
+                              )}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Glowing SVG Weight Trend Chart OR No Data Placeholder */}
+                    {(() => {
+                      const logs = weightLogsMap[selectedMember.id] || [];
+
+                      if (logs.length === 0) {
+                        return (
+                          <div className="bg-[#090b12] border border-cyan-900/30 rounded-xl p-8 text-center space-y-2">
+                            <Scale className="w-9 h-9 text-cyan-500/40 mx-auto opacity-70" />
+                            <h4 className="text-xs font-extrabold text-white tracking-wide">No weight data recorded yet.</h4>
+                            <p className="text-[11px] text-zinc-400 max-w-sm mx-auto">
+                              Recorded weight check-ins will automatically generate a line chart trend here.
+                            </p>
                           </div>
-                        ))
-                      ) : (
-                        <div className="p-2.5 text-center rounded-lg bg-[#0c0e17] border border-zinc-800/60 text-xs text-zinc-500">
-                          No custom weight logs recorded yet.
+                        );
+                      }
+
+                      const recentLogs = logs.slice(0, 12);
+                      const chartLogs = [...recentLogs].reverse();
+
+                      const points = chartLogs.map((l) => ({
+                        date: l.date ? l.date.split("-").slice(1).join("/") : "Log",
+                        weight: Number(l.weight),
+                      }));
+
+                      const weights = points.map((p) => p.weight);
+                      const minW = Math.min(...weights) - 1.5;
+                      const maxW = Math.max(...weights) + 1.5;
+                      const range = maxW - minW || 1;
+
+                      const width = 450;
+                      const height = 130;
+                      const padX = 35;
+                      const padY = 25;
+
+                      const coords = points.map((p, i) => {
+                        const x = points.length === 1 ? width / 2 : padX + (i / (points.length - 1)) * (width - padX * 2);
+                        const y = height - padY - ((p.weight - minW) / range) * (height - padY * 2);
+                        return { x, y, ...p };
+                      });
+
+                      const lineD = coords.reduce((acc, pt, i) => (i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`), "");
+                      const fillD = points.length > 1
+                        ? `${lineD} L ${coords[coords.length - 1].x} ${height - padY} L ${coords[0].x} ${height - padY} Z`
+                        : "";
+
+                      const maxLabels = 6;
+                      const labelStep = Math.max(1, Math.ceil(coords.length / maxLabels));
+
+                      return (
+                        <div className="bg-[#090b12] border border-cyan-900/40 rounded-xl p-3 relative space-y-1 overflow-hidden">
+                          <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono px-1">
+                            <span>Weight Fluctuation (Recent {points.length} Check-ins)</span>
+                            <span className="text-cyan-400 font-bold">Total History: {logs.length} entries</span>
+                          </div>
+                          <div className="relative w-full h-[130px]">
+                            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
+                              <defs>
+                                <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.35" />
+                                  <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.0" />
+                                </linearGradient>
+                                <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                                  <feGaussianBlur stdDeviation="3" result="blur" />
+                                  <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                                </filter>
+                              </defs>
+
+                              {[0.25, 0.5, 0.75].map((pct, idx) => (
+                                <line
+                                  key={idx}
+                                  x1={padX}
+                                  y1={padY + pct * (height - padY * 2)}
+                                  x2={width - padX}
+                                  y2={padY + pct * (height - padY * 2)}
+                                  stroke="#1e293b"
+                                  strokeDasharray="3 3"
+                                />
+                              ))}
+
+                              {fillD && <path d={fillD} fill="url(#chartGradient)" />}
+
+                              {lineD && points.length > 1 && (
+                                <path d={lineD} fill="none" stroke="#06b6d4" strokeWidth="2.5" filter="url(#glow)" strokeLinecap="round" strokeLinejoin="round" />
+                              )}
+
+                              {coords.map((pt, i) => {
+                                const showDateLabel = i === 0 || i === coords.length - 1 || i % labelStep === 0;
+
+                                return (
+                                  <g key={i} className="group cursor-pointer">
+                                    <circle cx={pt.x} cy={pt.y} r="4" fill="#0e111a" stroke="#22d3ee" strokeWidth="2.5" className="transition-transform group-hover:scale-150" />
+                                    <text x={pt.x} y={pt.y - 9} textAnchor="middle" fill="#22d3ee" fontSize="10" fontWeight="bold" className="font-mono">
+                                      {pt.weight}kg
+                                    </text>
+                                    {showDateLabel && (
+                                      <text x={pt.x} y={height - 4} textAnchor="middle" fill="#64748b" fontSize="8" fontWeight="bold">
+                                        {pt.date}
+                                      </text>
+                                    )}
+                                  </g>
+                                );
+                              })}
+                            </svg>
+                          </div>
                         </div>
-                      )}
+                      );
+                    })()}
+
+                    {/* Add New Weight Check Form */}
+                    <div className="bg-[#0e111a] border border-zinc-800 rounded-xl p-3 space-y-2">
+                      <span className="text-[11px] font-bold text-zinc-300 block flex items-center gap-1.5">
+                        <Plus className="w-3.5 h-3.5 text-cyan-400" /> Record Weight Check-in
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.1"
+                          placeholder="kg"
+                          value={newLogWeight || ""}
+                          onChange={(e) => setNewLogWeight(Number(e.target.value))}
+                          className="w-24 bg-[#161a29] border border-zinc-800 rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Note e.g. Staff Monthly Check-in"
+                          value={newLogNote}
+                          onChange={(e) => setNewLogNote(e.target.value)}
+                          className="flex-1 bg-[#161a29] border border-zinc-800 rounded-lg px-2.5 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAddWeightLog(selectedMember.id, selectedMember.height || 170)}
+                          className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs transition-all shadow-md shadow-cyan-500/20 shrink-0"
+                        >
+                          Save Check
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Weight Logs Timeline */}
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Weight Logs History</span>
+                      <div className="max-h-24 overflow-y-auto space-y-1.5 pr-1">
+                        {weightLogsMap[selectedMember.id] && weightLogsMap[selectedMember.id].length > 0 ? (
+                          weightLogsMap[selectedMember.id].map((log) => (
+                            <div key={log.id} className="flex items-center justify-between p-2 rounded-lg bg-[#0c0e17] border border-zinc-800/80 text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-500 font-mono text-[10px]">{log.date}</span>
+                                <span className="font-bold text-white font-mono">{log.weight} kg</span>
+                                <span className="text-[10px] text-zinc-400 font-mono">(BMI {log.bmi})</span>
+                              </div>
+                              <span className="text-[10px] text-cyan-400 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800/60">
+                                {log.note || "Check-in"}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="p-2.5 text-center rounded-lg bg-[#0c0e17] border border-zinc-800/60 text-xs text-zinc-500">
+                            No custom weight logs recorded yet.
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
               </div>
             </div>
@@ -8560,17 +9502,35 @@ export default function Home() {
               </button>
 
               <button
+                onClick={() => {
+                  const newShow = !showDetailPaymentHistory;
+                  setShowDetailPaymentHistory(newShow);
+                  if (newShow && selectedMember) {
+                    fetchMemberPaymentHistory(selectedMember);
+                  }
+                }}
+                className={`px-4 py-2.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
+                  showDetailPaymentHistory
+                    ? "bg-purple-600 hover:bg-purple-500 text-white border-purple-400 shadow-purple-950/50"
+                    : "bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border-purple-500/40 shadow-purple-950/30"
+                }`}
+              >
+                <Receipt className="w-4 h-4 text-purple-300" />
+                {showDetailPaymentHistory ? "Hide Payment History" : "Payment History"}
+              </button>
+
+              <button
                 onClick={(e) => {
                   setIsDetailModalOpen(false);
                   handleOpenEditModal(selectedMember, e);
                 }}
-                className="px-5 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center justify-center gap-2 transition-all"
+                className="px-5 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
               >
                 <Pencil className="w-4 h-4" /> Edit Member
               </button>
               <button
                 onClick={() => setIsDetailModalOpen(false)}
-                className="px-6 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs transition-all"
+                className="px-6 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs transition-all cursor-pointer"
               >
                 Close
               </button>
@@ -8582,53 +9542,53 @@ export default function Home() {
 
       {/* 2. ADD MEMBER MODAL */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#0e111a] border border-cyan-500/40 w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh] my-auto overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md">
+          <div className="bg-[#0e111a] border border-cyan-500/40 w-[90vw] max-w-4xl sm:max-w-5xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh] my-auto overflow-hidden">
             
             {/* Fixed Header */}
-            <div className="flex items-center justify-between border-b border-zinc-800 p-4 sm:p-5 shrink-0 bg-[#0e111a] z-10">
-              <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                <Plus className="w-5 h-5 text-cyan-400" /> Add New Member
+            <div className="flex items-center justify-between border-b border-zinc-800 p-4 sm:p-6 shrink-0 bg-[#0e111a] z-10">
+              <h3 className="text-lg sm:text-xl font-extrabold text-white flex items-center gap-2.5">
+                <Plus className="w-5 h-5 sm:w-6 sm:h-6 text-cyan-400" /> Add New Member
               </h3>
-              <button onClick={() => setIsAddModalOpen(false)} className="text-zinc-400 hover:text-white p-1">
-                <X className="w-5 h-5" />
+              <button onClick={() => setIsAddModalOpen(false)} className="text-zinc-400 hover:text-white p-2 rounded-xl hover:bg-zinc-800 transition-colors">
+                <X className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
             </div>
 
             {/* Scrollable Form Body */}
             <form onSubmit={handleAddSubmit} className="flex flex-col flex-1 overflow-hidden">
-              <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-130px)]">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs sm:text-sm">
+              <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5 text-sm">
                   {/* Member ID */}
                   <div>
-                    <label className="block text-xs font-semibold text-cyan-400 mb-1">Member ID *</label>
+                    <label className="block text-xs sm:text-sm font-bold text-cyan-400 mb-1.5">Member ID *</label>
                     <input
                       type="text"
                       required
                       placeholder="MEM022"
                       value={formData.memberId}
                       onChange={(e) => setFormData({ ...formData, memberId: e.target.value })}
-                      className="w-full bg-[#141724] border border-cyan-500/40 rounded-xl px-3.5 py-2.5 text-cyan-300 font-mono font-bold text-xs focus:outline-none focus:border-cyan-400"
+                      className="w-full bg-[#141724] border border-cyan-500/40 rounded-xl px-4 py-3 text-cyan-300 font-mono font-bold text-sm sm:text-base focus:outline-none focus:border-cyan-400"
                     />
                   </div>
 
                   {/* Full Name */}
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Full Name *</label>
+                    <label className="block text-xs sm:text-sm font-bold text-zinc-300 mb-1.5">Full Name *</label>
                     <input
                       type="text"
                       required
                       placeholder="e.g. Nimal Perera"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 text-xs"
+                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 text-sm sm:text-base"
                     />
                   </div>
 
                   {/* Password */}
                   <div>
-                    <label className="block text-xs font-semibold text-cyan-400 mb-1 flex items-center gap-1.5">
-                      <KeyRound className="w-3.5 h-3.5 text-cyan-400" /> Password *
+                    <label className="block text-xs sm:text-sm font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5">
+                      <KeyRound className="w-4 h-4 text-cyan-400" /> Password *
                     </label>
                     <input
                       type="password"
@@ -8637,45 +9597,45 @@ export default function Home() {
                       placeholder="Min 6 chars (Pass@123)"
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      className="w-full bg-[#141724] border border-cyan-500/40 rounded-xl px-3.5 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-cyan-400"
+                      className="w-full bg-[#141724] border border-cyan-500/40 rounded-xl px-4 py-3 text-white font-mono text-sm sm:text-base focus:outline-none focus:border-cyan-400"
                     />
                   </div>
 
                   {/* Phone */}
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Phone</label>
+                    <label className="block text-xs sm:text-sm font-bold text-zinc-300 mb-1.5">Phone Number</label>
                     <input
                       type="text"
                       placeholder="077 123 4567"
                       value={formData.phone}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
+                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 font-mono text-sm sm:text-base"
                     />
                   </div>
 
                   {/* Address Field (Full-width) */}
                   <div className="col-span-1 md:col-span-2">
-                    <label className="block text-xs font-semibold text-zinc-400 mb-1">Address</label>
+                    <label className="block text-xs sm:text-sm font-bold text-zinc-300 mb-1.5">Address</label>
                     <input
                       type="text"
                       placeholder="e.g. Main Street, Balangoda"
                       value={formData.address}
                       onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 text-xs"
+                      className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 text-sm sm:text-base"
                     />
                   </div>
 
                   {/* Standard Height & Weight Metrics */}
-                  <div className="bg-[#121522] border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
+                  <div className="bg-[#121522] border border-zinc-800/80 rounded-xl p-4 space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-cyan-400 uppercase tracking-wide">Standard Fitness Metrics</span>
-                      <span className="text-xs font-mono text-lime-400 font-bold">
+                      <span className="text-xs sm:text-sm font-extrabold text-cyan-400 uppercase tracking-wide">Standard Fitness Metrics</span>
+                      <span className="text-xs sm:text-sm font-mono text-lime-400 font-black bg-lime-950/60 px-2.5 py-0.5 rounded-md border border-lime-500/30">
                         BMI: {calculateBMI(formData.weight ?? 0, formData.height ?? 0)}
                       </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-3.5">
                       <div>
-                        <label className="block text-xs font-medium text-zinc-400 mb-1">Height (cm)</label>
+                        <label className="block text-xs font-bold text-zinc-400 mb-1">Height (cm)</label>
                         <input
                           type="number"
                           required
@@ -8683,11 +9643,11 @@ export default function Home() {
                           max="250"
                           value={formData.height ?? 0}
                           onChange={(e) => setFormData({ ...formData, height: Number(e.target.value) })}
-                          className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-cyan-500 text-xs"
+                          className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-3.5 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-cyan-500"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-zinc-400 mb-1">Weight (kg)</label>
+                        <label className="block text-xs font-bold text-zinc-400 mb-1">Weight (kg)</label>
                         <input
                           type="number"
                           required
@@ -8696,80 +9656,90 @@ export default function Home() {
                           step="0.1"
                           value={formData.weight ?? 0}
                           onChange={(e) => setFormData({ ...formData, weight: Number(e.target.value) })}
-                          className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-500 text-xs"
+                          className="w-full bg-[#181c2e] border border-zinc-700 rounded-xl px-3.5 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-amber-500"
                         />
                       </div>
                     </div>
                   </div>
 
                   {/* Emergency Contact & Membership Status */}
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div>
-                      <label className="block text-xs font-semibold text-zinc-400 mb-1">Emergency Contact</label>
+                      <label className="block text-xs sm:text-sm font-bold text-zinc-300 mb-1.5">Emergency Contact</label>
                       <input
                         type="text"
                         placeholder="e.g. Spouse / Parent Contact"
                         value={formData.emergencyContact}
                         onChange={(e) => setFormData({ ...formData, emergencyContact: e.target.value })}
-                        className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-cyan-500 text-xs"
+                        className="w-full bg-[#141724] border border-zinc-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 text-sm sm:text-base"
                       />
                     </div>
 
+                    {/* Strict Membership Status - Inactive Default Only */}
                     <div>
-                      <label className="block text-xs font-semibold text-zinc-400 mb-1">Membership Status</label>
-                      <div className="flex gap-4 pt-2">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="addStatus"
-                            value="Active"
-                            checked={formData.status === "Active"}
-                            onChange={() => setFormData({ ...formData, status: "Active" })}
-                            className="accent-lime-400"
-                          />
-                          <span className="text-xs text-lime-400 font-bold">Active</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
+                      <label className="block text-xs sm:text-sm font-bold text-zinc-300 mb-1.5 flex items-center justify-between">
+                        <span>Membership Status</span>
+                        <span className="text-[10px] sm:text-xs font-mono font-semibold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+                          Payment Required For Activation
+                        </span>
+                      </label>
+                      <div className="p-3 bg-[#121522] border border-rose-500/30 rounded-xl flex items-center gap-3">
+                        <div className="flex items-center gap-2">
                           <input
                             type="radio"
                             name="addStatus"
                             value="Inactive"
-                            checked={formData.status === "Inactive"}
-                            onChange={() => setFormData({ ...formData, status: "Inactive" })}
-                            className="accent-pink-500"
+                            checked={true}
+                            readOnly
+                            className="accent-rose-500 w-4 h-4 cursor-default"
                           />
-                          <span className="text-xs text-zinc-400">Inactive</span>
-                        </label>
+                          <span className="text-xs sm:text-sm font-black text-rose-400 flex items-center gap-1">
+                            <Lock className="w-3.5 h-3.5 text-rose-400" /> Inactive (Default)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 opacity-40">
+                          <input
+                            type="radio"
+                            name="addStatus"
+                            value="Active"
+                            disabled
+                            className="accent-lime-400 w-4 h-4 cursor-not-allowed"
+                          />
+                          <span className="text-xs sm:text-sm font-bold text-zinc-400 line-through">Active</span>
+                        </div>
                       </div>
+                      <p className="text-[11px] text-zinc-400 mt-1.5 leading-tight">
+                        🔒 New members are created as <strong className="text-rose-300">Inactive</strong>. Status automatically changes to Active once a fee payment is recorded.
+                      </p>
                     </div>
                   </div>
 
                   {/* Bottom Info Box (Full-width) */}
-                  <div className="col-span-1 md:col-span-2 p-3 bg-pink-500/10 border border-pink-500/30 rounded-xl flex items-center gap-2 text-xs text-pink-300">
-                    <QrCode className="w-4 h-4 text-pink-400 shrink-0" />
+                  <div className="col-span-1 md:col-span-2 p-3.5 bg-pink-500/10 border border-pink-500/30 rounded-xl flex items-center gap-3 text-xs sm:text-sm text-pink-300 font-medium">
+                    <QrCode className="w-5 h-5 text-pink-400 shrink-0" />
                     <span>Creates Member App account (<strong>{formData.memberId ? formData.memberId.trim().toUpperCase().replace(/^MEM-/, "MEM") : "MEM022"}@gym.com</strong>) &amp; Digital QR Pass.</span>
                   </div>
                 </div>
               </div>
 
-              {/* Fixed Footer */}
-              <div className="flex items-center justify-end gap-3 p-4 sm:p-5 border-t border-zinc-800 shrink-0 bg-[#0e111a] z-10">
+              {/* Fixed Prominent Footer */}
+              <div className="flex items-center justify-end gap-4 p-4 sm:p-6 border-t border-zinc-800 shrink-0 bg-[#0e111a] z-10">
                 <button
                   type="button"
                   disabled={isSubmittingMember}
                   onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs font-bold disabled:opacity-50 transition-colors"
+                  className="px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm sm:text-base font-extrabold disabled:opacity-50 transition-all cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmittingMember}
-                  className="px-5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-black shadow-lg shadow-cyan-500/25 flex items-center gap-2 disabled:opacity-50 cursor-pointer transition-all active:scale-95"
+                  className="px-8 sm:px-10 py-3 sm:py-3.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-sm sm:text-base font-black shadow-lg shadow-cyan-500/30 flex items-center gap-2.5 disabled:opacity-50 cursor-pointer transition-all active:scale-95"
                 >
                   {isSubmittingMember ? (
                     <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Saving...
+                      <RefreshCw className="w-4 h-4 animate-spin" /> Saving Member...
                     </>
                   ) : (
                     "Save Member"
@@ -9009,467 +9979,561 @@ export default function Home() {
 
       {/* 6. RECORD NEW PAYMENT MODAL */}
       {isRecordPaymentModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-[#120f1a] border border-purple-500/40 w-full max-w-4xl rounded-2xl p-5 shadow-2xl space-y-3.5 my-auto max-h-[95vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
-              <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-purple-400" /> Record Fee Payment
-              </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm overflow-hidden">
+          <div className="bg-[#120f1a] border border-purple-500/40 w-[95vw] max-w-7xl rounded-2xl p-4 shadow-2xl flex flex-col justify-between max-h-[90vh] overflow-hidden">
+            {/* Modal Header */}
+            <div className="shrink-0 flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-purple-400 shrink-0">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide leading-tight">
+                    Record Fee Payment
+                  </h3>
+                  <p className="text-[11px] text-purple-300/80">
+                    Record membership fees, registration charges, or guest walk-in income.
+                  </p>
+                </div>
+              </div>
               <button
+                type="button"
                 onClick={() => {
                   setIsMemberComboboxOpen(false);
                   setIsRecordPaymentModalOpen(false);
                 }}
-                className="text-zinc-400 hover:text-white"
+                className="text-zinc-400 hover:text-white p-1 cursor-pointer transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleRecordPaymentSubmit} className="space-y-4 text-xs">
-              {/* Section 1: Member Selection Section (Top) */}
-              <div className="p-4 rounded-xl bg-indigo-950/30 border border-indigo-500/20">
-                <label className="block text-xs font-semibold text-indigo-300 mb-1.5">Select Member *</label>
-                
-                <div className="relative">
-                  <div className="relative flex items-center">
-                    <Search className="w-4 h-4 text-indigo-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    <input
-                      type="text"
-                      placeholder="Type Member ID (e.g. MEM-001) or Name..."
-                      value={memberComboboxQuery}
-                      onFocus={() => setIsMemberComboboxOpen(true)}
-                      onChange={(e) => {
-                        setMemberComboboxQuery(e.target.value);
-                        setIsMemberComboboxOpen(true);
-                      }}
-                      className="w-full bg-[#171424] border border-indigo-500/40 rounded-xl pl-10 pr-9 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-400 font-medium"
-                    />
-                    {memberComboboxQuery ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMemberComboboxQuery("");
-                          setIsMemberComboboxOpen(true);
-                        }}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    ) : (
-                      <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <form onSubmit={handleRecordPaymentSubmit} className="flex-1 flex flex-col justify-between overflow-hidden">
+              {/* Scrollable Body Content */}
+              <div className="flex-1 overflow-y-auto py-2 pr-1 space-y-2.5 custom-scrollbar">
+                {/* 2-Column Grid Layout */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  
+                  {/* COLUMN 1: Member Selection, Category, Duration, Admission & Visual Breakdown */}
+                  <div className="space-y-2.5">
+                    {/* Member Selection Box */}
+                    <div className="p-3 rounded-xl bg-[#181427] border border-purple-500/30 space-y-1.5">
+                      <label className="block text-xs font-bold text-purple-300">
+                        Select Member *
+                      </label>
+
+                      <div className="relative">
+                        <div className="relative flex items-center">
+                          <Search className="w-3.5 h-3.5 text-purple-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <input
+                            type="text"
+                            placeholder="Search Member ID (MEM-...), Name, or Phone..."
+                            value={memberComboboxQuery}
+                            onFocus={() => setIsMemberComboboxOpen(true)}
+                            onChange={(e) => {
+                              setMemberComboboxQuery(e.target.value);
+                              setIsMemberComboboxOpen(true);
+                            }}
+                            className="w-full bg-[#130f21] border border-purple-500/40 rounded-xl pl-8 pr-8 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-purple-400 font-medium"
+                          />
+                          {memberComboboxQuery ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMemberComboboxQuery("");
+                                setIsMemberComboboxOpen(true);
+                              }}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          )}
+                        </div>
+
+                        {/* Selected Member / Walk-in / Unselected Details Card */}
+                        {(() => {
+                          if (paymentFormData.memberId === "WALK_IN") {
+                            return (
+                              <div className="mt-1.5 p-2 rounded-xl bg-[#241c14] border border-amber-500/40 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center font-bold text-amber-300 text-xs">
+                                    🛍️
+                                  </div>
+                                  <div>
+                                    <div className="text-xs font-bold text-amber-300 leading-none">Walk-in / External Income</div>
+                                    <div className="text-[10px] text-zinc-400 font-mono mt-0.5">Non-member / Guest Payment</div>
+                                  </div>
+                                </div>
+                                <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/30 font-bold">
+                                  External 🌐
+                                </span>
+                              </div>
+                            );
+                          }
+
+                          const selectedMem = members.find((m) => m.id === paymentFormData.memberId);
+                          if (selectedMem) {
+                            return (
+                              <div className="mt-1.5 p-2 rounded-xl bg-[#1c172e] border border-purple-500/40 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 rounded-full bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-xs font-bold text-purple-300">
+                                    {selectedMem.name.charAt(0)}
+                                  </div>
+                                  <div>
+                                    <div className="text-xs font-bold text-white leading-none">{selectedMem.name}</div>
+                                    <div className="text-[10px] text-purple-300 font-mono mt-0.5">{selectedMem.id} • {selectedMem.tier}</div>
+                                  </div>
+                                </div>
+                                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/30 font-bold">
+                                  Selected ✓
+                                </span>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div className="mt-1.5 p-2 rounded-xl border border-dashed border-purple-500/30 bg-[#130f21]/60 flex items-center justify-between">
+                              <span className="text-[11px] text-zinc-400 font-medium">No member selected. Search above or select Walk-in.</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPaymentFormData({ ...paymentFormData, memberId: "WALK_IN" });
+                                  setMemberComboboxQuery("Walk-in / External Income (No Member)");
+                                }}
+                                className="text-[10px] font-bold text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 px-2 py-0.5 rounded-lg border border-amber-500/30 transition-colors cursor-pointer"
+                              >
+                                + Walk-in
+                              </button>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Walk-in Payer Name / Reference Input */}
+                        {paymentFormData.memberId === "WALK_IN" && (
+                          <div className="mt-1.5 space-y-0.5">
+                            <label className="block text-[11px] font-bold text-amber-300">
+                              Payer Name / Reference *
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="e.g. Kasun Perera (Walk-in Guest) or Day Pass Sales"
+                              value={paymentFormData.externalPayerName}
+                              onChange={(e) => setPaymentFormData({ ...paymentFormData, externalPayerName: e.target.value })}
+                              className="w-full bg-[#130f21] border border-amber-500/40 rounded-xl px-3 py-1 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 text-xs font-medium"
+                            />
+                          </div>
+                        )}
+
+                        {/* Autocomplete Dropdown Popover */}
+                        {isMemberComboboxOpen && (
+                          <div className="absolute left-0 right-0 top-[56px] z-50 bg-[#161224] border border-purple-500/40 rounded-2xl shadow-2xl max-h-48 overflow-y-auto divide-y divide-zinc-800/60 animate-in fade-in zoom-in-95 duration-150">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPaymentFormData({
+                                  ...paymentFormData,
+                                  memberId: "WALK_IN",
+                                  externalPayerName: paymentFormData.externalPayerName || "",
+                                });
+                                setMemberComboboxQuery("Walk-in / External Income (No Member)");
+                                setIsMemberComboboxOpen(false);
+                              }}
+                              className={`w-full text-left p-2 hover:bg-amber-600/25 transition-colors flex items-center justify-between border-b border-amber-500/30 ${
+                                paymentFormData.memberId === "WALK_IN" ? "bg-amber-950/60 border-l-4 border-amber-400" : "bg-[#1f192b]"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <div className="w-5 h-5 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-[10px] font-bold text-amber-300">
+                                  🛍️
+                                </div>
+                                <div>
+                                  <span className="text-xs font-bold text-amber-300 block">Walk-in / External Income (No Member)</span>
+                                  <span className="text-[10px] text-zinc-400 font-mono">Guest Sales, Supplements, Walk-in Pass</span>
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-bold">
+                                External 🌐
+                              </span>
+                            </button>
+
+                            {(() => {
+                              const filtered = members.filter(
+                                (m) =>
+                                  m.name.toLowerCase().includes(memberComboboxQuery.toLowerCase()) ||
+                                  m.id.toLowerCase().includes(memberComboboxQuery.toLowerCase()) ||
+                                  m.phone.toLowerCase().includes(memberComboboxQuery.toLowerCase())
+                              );
+
+                              if (filtered.length === 0) {
+                                return (
+                                  <div className="p-2 text-center text-xs text-zinc-400 italic">
+                                    No registered member found matching "{memberComboboxQuery}"
+                                  </div>
+                                );
+                              }
+
+                              return filtered.map((m) => (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  onClick={() => {
+                                    const newCat = m.tier && gymPackages.some((p) => p.name === m.tier) ? m.tier : paymentFormData.category;
+                                    const calc = calculatePaymentAmount(newCat, paymentFormData.durationMonths);
+                                    const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
+                                    setPaymentFormData({
+                                      ...paymentFormData,
+                                      memberId: m.id,
+                                      category: newCat,
+                                      amount: finalAmt,
+                                      paidAmount: finalAmt,
+                                    });
+                                    setMemberComboboxQuery(`${m.name} (${m.id})`);
+                                    setIsMemberComboboxOpen(false);
+                                  }}
+                                  className={`w-full text-left p-2 hover:bg-purple-600/25 transition-colors flex items-center justify-between ${
+                                    paymentFormData.memberId === m.id ? "bg-purple-950/60 border-l-4 border-purple-400" : ""
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-5 h-5 rounded-full bg-purple-500/20 border border-purple-400/30 flex items-center justify-center text-[10px] font-bold text-purple-300">
+                                      {m.name.charAt(0)}
+                                    </div>
+                                    <div>
+                                      <span className="text-xs font-bold text-white block">{m.name}</span>
+                                      <span className="text-[10px] text-zinc-400 font-mono">{m.id} • {m.phone}</span>
+                                    </div>
+                                  </div>
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-zinc-800 text-purple-300 font-mono border border-zinc-700">
+                                    {m.tier}
+                                  </span>
+                                </button>
+                              ));
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Fee Category & Duration Select Box (Inline Grid) */}
+                    <div className="p-3 rounded-xl bg-[#181427] border border-purple-500/30 space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {/* Fee Category */}
+                        <div>
+                          <label className="block text-xs font-bold text-purple-300 mb-0.5">
+                            Fee Package / Category *
+                          </label>
+                          <select
+                            value={paymentFormData.category}
+                            onChange={(e) => {
+                              const newCat = e.target.value;
+                              const calc = calculatePaymentAmount(newCat, paymentFormData.durationMonths);
+                              const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
+                              setPaymentFormData({ ...paymentFormData, category: newCat, amount: finalAmt, paidAmount: finalAmt });
+                            }}
+                            className="w-full bg-[#130f21] border border-purple-500/30 rounded-xl px-2.5 py-1.5 text-white font-bold text-xs focus:outline-none focus:border-purple-400"
+                          >
+                            <option value="Admission Fee">Admission Fee — LKR 1,500</option>
+                            <option value="Supplements & Merchandise">Supplements & Merchandise</option>
+                            <optgroup label="Official Membership Tiers">
+                              {gymPackages.map((pkg) => (
+                                <option key={pkg.id} value={pkg.package_name || pkg.name}>
+                                  {pkg.package_name || pkg.name} — LKR {pkg.price.toLocaleString()}/mo
+                                </option>
+                              ))}
+                            </optgroup>
+                          </select>
+                        </div>
+
+                        {/* Duration Select */}
+                        <div>
+                          <label className="block text-xs font-bold text-purple-300 mb-0.5">
+                            Package Duration *
+                          </label>
+                          <select
+                            value={paymentFormData.durationMonths}
+                            onChange={(e) => {
+                              const newMonths = Number(e.target.value);
+                              const calc = calculatePaymentAmount(paymentFormData.category, newMonths);
+                              const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
+                              setPaymentFormData({ ...paymentFormData, durationMonths: newMonths, amount: finalAmt, paidAmount: finalAmt });
+                            }}
+                            className="w-full bg-[#130f21] border border-purple-500/30 rounded-xl px-2.5 py-1.5 text-purple-200 font-bold text-xs focus:outline-none focus:border-purple-400"
+                          >
+                            <option value={1}>1 Month (Standard)</option>
+                            <option value={3}>3 Months (10% OFF)</option>
+                            <option value={6}>6 Months (20% OFF)</option>
+                            <option value={12}>12 Months (30% OFF)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Include Admission Fee Checkbox */}
+                      <div className="p-2 rounded-lg bg-[#1d1733] border border-purple-500/30">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(paymentFormData.includeAdmissionFee)}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              const baseCalc = calculatePaymentAmount(paymentFormData.category, paymentFormData.durationMonths);
+                              const newAmount = checked ? baseCalc.finalAmount + 1500 : baseCalc.finalAmount;
+                              setPaymentFormData({
+                                ...paymentFormData,
+                                includeAdmissionFee: checked,
+                                amount: newAmount,
+                                paidAmount: newAmount,
+                              });
+                            }}
+                            className="w-3.5 h-3.5 accent-purple-500 rounded shrink-0"
+                          />
+                          <div className="flex-1 flex items-center justify-between text-xs">
+                            <span className="font-bold text-white text-[11px]">Include Admission Fee (+ LKR 1,500)</span>
+                            <span className="text-[10px] text-purple-300/70 font-medium">One-time registration</span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Total Amount Visual Breakdown Card */}
+                    {(() => {
+                      const baseCalc = calculatePaymentAmount(paymentFormData.category, paymentFormData.durationMonths);
+                      const pkgPrice = baseCalc.finalAmount;
+                      const hasAdmission = Boolean(paymentFormData.includeAdmissionFee);
+                      const totalAmt = paymentFormData.amount;
+
+                      return (
+                        <div className="p-2.5 rounded-xl bg-gradient-to-br from-purple-950/40 to-slate-900/60 border border-purple-500/30 space-y-1">
+                          <div className="text-[10px] font-bold text-purple-300 tracking-wider uppercase flex items-center gap-1.5">
+                            <Sparkles className="w-3 h-3 text-purple-400" /> Payment Breakdown
+                          </div>
+                          <div className="space-y-0.5 text-[11px]">
+                            <div className="flex items-center justify-between text-zinc-300">
+                              <span>Selected Package ({paymentFormData.durationMonths} Mo)</span>
+                              <span className="font-mono font-semibold text-white">LKR {pkgPrice.toLocaleString()}</span>
+                            </div>
+                            {hasAdmission && (
+                              <div className="flex items-center justify-between text-amber-300">
+                                <span>Admission Fee (One-Time)</span>
+                                <span className="font-mono font-semibold">+ LKR 1,500</span>
+                              </div>
+                            )}
+                            <div className="flex items-center justify-between pt-1 border-t border-purple-500/20 text-xs font-extrabold text-white">
+                              <span>Total Calculated Amount</span>
+                              <span className="font-mono text-emerald-400">LKR {totalAmt.toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Item Description (Supplements & Merchandise) */}
+                    {paymentFormData.category === "Supplements & Merchandise" && (
+                      <div className="p-2.5 rounded-xl bg-[#181427] border border-pink-500/30 space-y-1">
+                        <label className="block text-xs font-bold text-pink-300">
+                          Item Description *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Whey Protein 1kg, Creatine 300g, Gym Shaker Bottle"
+                          value={paymentFormData.itemDescription}
+                          onChange={(e) => setPaymentFormData({ ...paymentFormData, itemDescription: e.target.value })}
+                          className="w-full bg-[#130f21] border border-pink-500/40 rounded-xl px-2.5 py-1.5 text-white font-medium focus:outline-none focus:border-pink-400 text-xs"
+                        />
+                      </div>
+                    )}
+
+                    {/* Gym Revenue Share (%) Input */}
+                    {(paymentFormData.category.toLowerCase().includes("pt") || paymentFormData.category.toLowerCase().includes("personal training")) && (
+                      <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/30 space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <label className="font-bold text-purple-300 flex items-center gap-1.5">
+                            <Dumbbell className="w-3.5 h-3.5 text-purple-400" /> Gym Revenue Share (%)
+                          </label>
+                          <span className="text-[10px] text-zinc-400 font-mono">
+                            Trainer gets {100 - (Number(paymentFormData.gymRevenuePercentage) || 0)}%
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 items-center">
+                          <input
+                            type="number"
+                            required
+                            min="0"
+                            max="100"
+                            step="any"
+                            value={paymentFormData.gymRevenuePercentage}
+                            onChange={(e) => setPaymentFormData({ ...paymentFormData, gymRevenuePercentage: Number(e.target.value) })}
+                            className="w-full bg-[#130f21] border border-purple-500/40 rounded-xl px-2.5 py-1 text-white font-mono font-bold focus:outline-none focus:border-purple-400 text-xs"
+                          />
+                          <div className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-xl border border-emerald-500/30 text-center">
+                            Gym Net: LKR {Math.round(paymentFormData.amount * ((Number(paymentFormData.gymRevenuePercentage) || 0) / 100)).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
 
-                  {/* Selected Member / Walk-in Details Card */}
-                  {(() => {
-                    if (paymentFormData.memberId === "WALK_IN") {
-                      return (
-                        <div className="mt-2 p-2.5 rounded-xl bg-[#241c14] border border-amber-500/40 flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center font-bold text-amber-300 text-xs">
-                              🛍️
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-amber-300 leading-none">Walk-in / External Income</div>
-                              <div className="text-[10px] text-zinc-400 font-mono">Non-member / Guest Payment</div>
-                            </div>
-                          </div>
-                          <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-bold">
-                            No Member ID
-                          </span>
+                  {/* COLUMN 2: Dates, Payment Method, Amounts & Receipt */}
+                  <div className="space-y-2.5">
+                    {/* Payment Date & Dynamic Calculated Expiry Date */}
+                    <div className="p-3 rounded-xl bg-[#181427] border border-purple-500/30 space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {/* Payment Date Input */}
+                        <div>
+                          <label className="block text-xs font-bold text-purple-300 mb-0.5 flex items-center gap-1">
+                            <CalendarCheck className="w-3 h-3 text-purple-400" /> Payment Date *
+                          </label>
+                          <input
+                            type="date"
+                            required
+                            value={paymentFormData.paymentDate || new Date().toISOString().split("T")[0]}
+                            onChange={(e) => setPaymentFormData({ ...paymentFormData, paymentDate: e.target.value })}
+                            className="w-full bg-[#130f21] border border-purple-500/40 rounded-xl px-2.5 py-1.5 text-white font-mono font-bold text-xs focus:outline-none focus:border-purple-400 [color-scheme:dark]"
+                          />
                         </div>
-                      );
-                    }
 
-                    const selectedMem = members.find((m) => m.id === paymentFormData.memberId);
-                    if (!selectedMem) return null;
-                    return (
-                      <div className="mt-2 p-2.5 rounded-xl bg-[#1c172e] border border-indigo-500/30 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-xs font-bold text-indigo-300">
-                            {selectedMem.name.charAt(0)}
-                          </div>
-                          <div>
-                            <div className="text-xs font-bold text-white leading-none">{selectedMem.name}</div>
-                            <div className="text-[10px] text-indigo-300 font-mono">{selectedMem.id} • {selectedMem.tier}</div>
-                          </div>
-                        </div>
-                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 font-bold">
-                          Selected ✓
-                        </span>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Dynamic Walk-in Payer Name / Reference Input */}
-                  {paymentFormData.memberId === "WALK_IN" && (
-                    <div className="mt-2 space-y-0.5">
-                      <label className="block text-xs font-semibold text-amber-300">
-                        Payer Name / Reference *
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Kasun Perera (Walk-in Guest) or Day Pass Sales"
-                        value={paymentFormData.externalPayerName}
-                        onChange={(e) => setPaymentFormData({ ...paymentFormData, externalPayerName: e.target.value })}
-                        className="w-full bg-[#181424] border border-amber-500/40 rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 text-xs font-medium"
-                      />
-                    </div>
-                  )}
-
-                  {/* Autocomplete Dropdown Popover */}
-                  {isMemberComboboxOpen && (
-                    <div className="absolute left-0 right-0 top-11 z-50 bg-[#161224] border border-indigo-500/40 rounded-xl shadow-2xl max-h-48 overflow-y-auto divide-y divide-zinc-800/60 animate-in fade-in zoom-in-95 duration-150">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPaymentFormData({
-                            ...paymentFormData,
-                            memberId: "WALK_IN",
-                            externalPayerName: paymentFormData.externalPayerName || "",
-                          });
-                          setMemberComboboxQuery("Walk-in / External Income (No Member)");
-                          setIsMemberComboboxOpen(false);
-                        }}
-                        className={`w-full text-left p-2.5 hover:bg-amber-600/25 transition-colors flex items-center justify-between border-b border-amber-500/30 ${
-                          paymentFormData.memberId === "WALK_IN" ? "bg-amber-950/60 border-l-2 border-amber-400" : "bg-[#1f192b]"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-xs font-bold text-amber-300">
-                            🛍️
-                          </div>
-                          <div>
-                            <span className="text-xs font-bold text-amber-300 block">Walk-in / External Income (No Member)</span>
-                            <span className="text-[10px] text-zinc-400 font-mono">Guest Sales, Supplements, Walk-in Pass</span>
-                          </div>
-                        </div>
-                        <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-bold">
-                          External 🌐
-                        </span>
-                      </button>
-
-                      {(() => {
-                        const filtered = members.filter(
-                          (m) =>
-                            m.name.toLowerCase().includes(memberComboboxQuery.toLowerCase()) ||
-                            m.id.toLowerCase().includes(memberComboboxQuery.toLowerCase()) ||
-                            m.phone.toLowerCase().includes(memberComboboxQuery.toLowerCase())
-                        );
-
-                        if (filtered.length === 0) {
-                          return (
-                            <div className="p-2.5 text-center text-xs text-zinc-400 italic">
-                              No registered member found matching "{memberComboboxQuery}"
-                            </div>
-                          );
-                        }
-
-                        return filtered.map((m) => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            onClick={() => {
-                              const newCat = m.tier && gymPackages.some((p) => p.name === m.tier) ? m.tier : paymentFormData.category;
-                              const calc = calculatePaymentAmount(newCat, paymentFormData.durationMonths);
-                              const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
-                              setPaymentFormData({
-                                ...paymentFormData,
-                                memberId: m.id,
-                                category: newCat,
-                                amount: finalAmt,
-                                paidAmount: finalAmt,
-                              });
-                              setMemberComboboxQuery(`${m.name} (${m.id})`);
-                              setIsMemberComboboxOpen(false);
-                            }}
-                            className={`w-full text-left p-2.5 hover:bg-purple-600/25 transition-colors flex items-center justify-between ${
-                              paymentFormData.memberId === m.id ? "bg-purple-950/60 border-l-2 border-purple-400" : ""
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="w-6 h-6 rounded-full bg-purple-500/20 border border-purple-400/30 flex items-center justify-center text-xs font-bold text-purple-300">
-                                {m.name.charAt(0)}
-                              </div>
-                              <div>
-                                <span className="text-xs font-bold text-white block">{m.name}</span>
-                                <span className="text-[10px] text-zinc-400 font-mono">{m.id} • {m.phone}</span>
-                              </div>
-                            </div>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-zinc-800 text-purple-300 font-mono border border-zinc-700">
-                              {m.tier}
+                        {/* Calculated Expiry / Next Due Date Preview */}
+                        <div>
+                          <label className="block text-xs font-bold text-pink-300 mb-0.5 flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-pink-400" /> Next Due / Expiry Date
+                          </label>
+                          <div className="w-full bg-[#130f21] border border-pink-500/40 rounded-xl px-2.5 py-1.5 text-pink-200 font-mono font-extrabold text-xs flex items-center justify-between shadow-inner">
+                            <span>{calculateExpiryDate(paymentFormData.paymentDate, paymentFormData.durationMonths)}</span>
+                            <span className="text-[9px] uppercase font-sans font-bold px-1 py-0.2 rounded bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                              +{paymentFormData.durationMonths} Mo
                             </span>
-                          </button>
-                        ));
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Payment Method */}
+                      <div>
+                        <label className="block text-xs font-bold text-purple-300 mb-0.5">
+                          Payment Method *
+                        </label>
+                        <select
+                          value={paymentFormData.method}
+                          onChange={(e) => setPaymentFormData({ ...paymentFormData, method: e.target.value as any })}
+                          className="w-full bg-[#130f21] border border-purple-500/30 rounded-xl px-2.5 py-1.5 text-white font-bold text-xs focus:outline-none focus:border-purple-400"
+                        >
+                          <option value="Cash">Cash</option>
+                          <option value="Card POS">Card POS Machine</option>
+                          <option value="Bank Transfer">Bank Transfer</option>
+                          <option value="Online">Online / PayHere</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Financial Inputs: Package Price Total & Amount Paid / Balance Due */}
+                    <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/30 space-y-2">
+                      {/* Package Price Total */}
+                      <div>
+                        <label className="block text-xs font-bold text-emerald-300 mb-0.5 flex items-center justify-between">
+                          <span>Package Price Total (LKR) *</span>
+                          <span className="text-[10px] text-zinc-400 font-normal">Editable</span>
+                        </label>
+                        <input
+                          type="number"
+                          required
+                          min="1"
+                          step="any"
+                          value={paymentFormData.amount}
+                          onChange={(e) => {
+                            const newTotal = Number(e.target.value);
+                            setPaymentFormData({
+                              ...paymentFormData,
+                              amount: newTotal,
+                              paidAmount: newTotal,
+                            });
+                          }}
+                          className="w-full bg-[#130f21] border border-emerald-500/40 rounded-xl px-3 py-1.5 text-white font-mono font-black text-xs sm:text-sm focus:outline-none focus:border-emerald-400"
+                        />
+                        {(() => {
+                          const calc = calculatePaymentAmount(paymentFormData.category, paymentFormData.durationMonths);
+                          if (calc.saved > 0) {
+                            return (
+                              <div className="mt-1 flex items-center gap-1.5 text-[10px] font-bold text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/30 font-mono">
+                                <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
+                                <span>Saved LKR {calc.saved.toLocaleString()} ({calc.discountPercent}% OFF)</span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
+
+                      {/* Amount Paid Today / Balance Due Grid */}
+                      {(() => {
+                        const totalPkgPrice = Number(paymentFormData.amount) || 0;
+                        const currentPaid = Number(paymentFormData.paidAmount ?? totalPkgPrice);
+                        const calculatedBalanceDue = Math.max(0, totalPkgPrice - currentPaid);
+
+                        return (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2 bg-[#13111e] border border-emerald-500/30 rounded-xl">
+                            <div>
+                              <label className="block text-[10px] font-bold text-emerald-400 mb-0.5 truncate">
+                                Amount Paid Today
+                              </label>
+                              <input
+                                type="number"
+                                required
+                                min="0"
+                                max={totalPkgPrice || undefined}
+                                step="any"
+                                value={paymentFormData.paidAmount ?? totalPkgPrice}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value);
+                                  setPaymentFormData({ ...paymentFormData, paidAmount: val });
+                                }}
+                                className="w-full bg-[#181528] border border-emerald-500/40 rounded-xl px-2.5 py-1 text-emerald-300 font-mono font-black focus:outline-none focus:border-emerald-400 text-xs"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-rose-400 mb-0.5 truncate">
+                                Balance Due
+                              </label>
+                              <div
+                                className={`w-full rounded-xl px-2.5 py-1 font-mono font-black text-xs border truncate ${
+                                  calculatedBalanceDue > 0
+                                    ? "bg-rose-950/60 border-rose-500/50 text-rose-300"
+                                    : "bg-zinc-900/80 border-zinc-800 text-zinc-400"
+                                }`}
+                              >
+                                {calculatedBalanceDue > 0 ? `LKR ${calculatedBalanceDue.toLocaleString()}` : "LKR 0"}
+                              </div>
+                            </div>
+                          </div>
+                        );
                       })()}
                     </div>
-                  )}
-                </div>
-              </div>
 
-              {/* Section 2: Core Payment Details (Middle) */}
-              <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/50 mt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Fee Package */}
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Fee Package</label>
-                    <select
-                      value={paymentFormData.category}
-                      onChange={(e) => {
-                        const newCat = e.target.value;
-                        const calc = calculatePaymentAmount(newCat, paymentFormData.durationMonths);
-                        const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
-                        setPaymentFormData({ ...paymentFormData, category: newCat, amount: finalAmt, paidAmount: finalAmt });
-                      }}
-                      className="w-full bg-[#171424] border border-zinc-700 rounded-xl px-3 py-2 text-white font-bold focus:outline-none focus:border-purple-500 text-xs"
-                    >
-                      <option value="Admission Fee">Admission Fee — LKR 1,500</option>
-                      <option value="Supplements & Merchandise">Supplements & Merchandise</option>
-                      <optgroup label="Official Membership Tiers">
-                        {gymPackages.map((pkg) => (
-                          <option key={pkg.id} value={pkg.package_name || pkg.name}>
-                            {pkg.package_name || pkg.name} — LKR {pkg.price.toLocaleString()}/mo
-                          </option>
-                        ))}
-                      </optgroup>
-                    </select>
-                  </div>
-
-                  {/* Duration */}
-                  <div>
-                    <label className="block text-xs font-semibold text-purple-400 mb-1">Duration</label>
-                    <select
-                      value={paymentFormData.durationMonths}
-                      onChange={(e) => {
-                        const newMonths = Number(e.target.value);
-                        const calc = calculatePaymentAmount(paymentFormData.category, newMonths);
-                        const finalAmt = paymentFormData.includeAdmissionFee ? calc.finalAmount + 1500 : calc.finalAmount;
-                        setPaymentFormData({ ...paymentFormData, durationMonths: newMonths, amount: finalAmt, paidAmount: finalAmt });
-                      }}
-                      className="w-full bg-[#171424] border border-purple-500/40 rounded-xl px-3 py-2 text-purple-300 font-bold focus:outline-none focus:border-purple-400 text-xs"
-                    >
-                      <option value={1}>1 Month (Standard)</option>
-                      <option value={3}>3 Months (10% OFF)</option>
-                      <option value={6}>6 Months (20% OFF)</option>
-                      <option value={12}>12 Months (30% OFF)</option>
-                    </select>
-                  </div>
-
-                  {/* Payment Date */}
-                  <div>
-                    <label className="block text-xs font-semibold text-purple-400 mb-1 flex items-center gap-1">
-                      <CalendarCheck className="w-3.5 h-3.5 text-purple-400" /> Payment Date *
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      value={paymentFormData.paymentDate || new Date().toISOString().split("T")[0]}
-                      onChange={(e) => setPaymentFormData({ ...paymentFormData, paymentDate: e.target.value })}
-                      className="w-full bg-[#171424] border border-purple-500/40 rounded-xl px-3 py-2 text-white font-mono font-bold text-xs focus:outline-none focus:border-purple-400"
-                    />
-                  </div>
-
-                  {/* Payment Method */}
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Payment Method</label>
-                    <select
-                      value={paymentFormData.method}
-                      onChange={(e) => setPaymentFormData({ ...paymentFormData, method: e.target.value as any })}
-                      className="w-full bg-[#171424] border border-zinc-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500 text-xs"
-                    >
-                      <option value="Cash">Cash</option>
-                      <option value="Card POS">Card POS Machine</option>
-                      <option value="Bank Transfer">Bank Transfer</option>
-                      <option value="Online">Online / PayHere</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 3: Financials & Calculations (Lower Middle) */}
-              <div className="p-4 rounded-xl bg-emerald-950/20 border border-emerald-500/20 mt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Package Price Total */}
-                  <div>
-                    <label className="block text-xs font-semibold text-emerald-300 mb-1 flex items-center justify-between">
-                      <span>Package Price Total (LKR)</span>
-                      <span className="text-[10px] text-zinc-500 font-normal">Editable</span>
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      min="1"
-                      step="any"
-                      value={paymentFormData.amount}
-                      onChange={(e) => {
-                        const newTotal = Number(e.target.value);
-                        setPaymentFormData({
-                          ...paymentFormData,
-                          amount: newTotal,
-                          paidAmount: newTotal,
-                        });
-                      }}
-                      className="w-full bg-[#171424] border border-emerald-500/40 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-emerald-400 text-xs"
-                    />
-                    {(() => {
-                      const calc = calculatePaymentAmount(paymentFormData.category, paymentFormData.durationMonths);
-                      if (calc.saved > 0) {
-                        return (
-                          <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 font-mono">
-                            <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
-                            <span>Saved LKR {calc.saved.toLocaleString()} ({calc.discountPercent}% OFF)</span>
-                          </div>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </div>
-
-                  {/* Amount Paid Today / Balance Due */}
-                  <div>
-                    {(() => {
-                      const totalPkgPrice = Number(paymentFormData.amount) || 0;
-                      const currentPaid = Number(paymentFormData.paidAmount ?? totalPkgPrice);
-                      const calculatedBalanceDue = Math.max(0, totalPkgPrice - currentPaid);
-
-                      return (
-                        <div className="grid grid-cols-2 gap-2 p-2 bg-[#13111e] border border-emerald-500/30 rounded-xl">
-                          <div>
-                            <label className="block text-[11px] font-bold text-emerald-400 mb-0.5 truncate">
-                              Amount Paid Today
-                            </label>
-                            <input
-                              type="number"
-                              required
-                              min="0"
-                              max={totalPkgPrice || undefined}
-                              step="any"
-                              value={paymentFormData.paidAmount ?? totalPkgPrice}
-                              onChange={(e) => {
-                                const val = Number(e.target.value);
-                                setPaymentFormData({ ...paymentFormData, paidAmount: val });
-                              }}
-                              className="w-full bg-[#181528] border border-emerald-500/40 rounded-lg px-2.5 py-1.5 text-emerald-300 font-mono font-black focus:outline-none focus:border-emerald-400 text-xs"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[11px] font-bold text-rose-400 mb-0.5 truncate">
-                              Balance Due
-                            </label>
-                            <div
-                              className={`w-full rounded-lg px-2.5 py-1.5 font-mono font-black text-xs border truncate ${
-                                calculatedBalanceDue > 0
-                                  ? "bg-rose-950/60 border-rose-500/50 text-rose-300"
-                                  : "bg-zinc-900/80 border-zinc-800 text-zinc-400"
-                              }`}
-                            >
-                              {calculatedBalanceDue > 0 ? `LKR ${calculatedBalanceDue.toLocaleString()}` : "LKR 0"}
-                            </div>
-                          </div>
+                    {/* Send Digital Receipt Checkbox Card */}
+                    <div className="p-2.5 rounded-xl bg-[#181427] border border-purple-500/30">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={paymentFormData.sendReceiptAlert}
+                          onChange={(e) => setPaymentFormData({ ...paymentFormData, sendReceiptAlert: e.target.checked })}
+                          className="w-3.5 h-3.5 accent-purple-500 rounded shrink-0"
+                        />
+                        <div className="flex-1 flex items-center justify-between text-xs">
+                          <span className="font-bold text-white flex items-center gap-1.5 text-[11px]">
+                            <MessageCircle className="w-3.5 h-3.5 text-purple-400" /> Send Digital Receipt via Member App Chat
+                          </span>
+                          <span className="text-[10px] text-purple-300/70">Instant invoice</span>
                         </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 4: Toggles & Actions (Bottom) */}
-              <div className="p-4 rounded-xl bg-purple-950/20 border border-purple-500/20 mt-4 space-y-3">
-                {/* Include Admission Fee Checkbox */}
-                <div>
-                  <label className="flex items-center gap-2.5 cursor-pointer bg-[#171424] hover:bg-[#1e1932] p-2.5 rounded-xl border border-purple-500/30 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(paymentFormData.includeAdmissionFee)}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        const baseCalc = calculatePaymentAmount(paymentFormData.category, paymentFormData.durationMonths);
-                        const newAmount = checked ? baseCalc.finalAmount + 1500 : baseCalc.finalAmount;
-                        setPaymentFormData({
-                          ...paymentFormData,
-                          includeAdmissionFee: checked,
-                          amount: newAmount,
-                          paidAmount: newAmount,
-                        });
-                      }}
-                      className="w-4 h-4 accent-purple-500 rounded shrink-0"
-                    />
-                    <div className="flex-1 flex items-center justify-between text-xs">
-                      <span className="font-bold text-white">Include Admission Fee (+ LKR 1,500)</span>
-                      <span className="text-[10px] text-zinc-400">One-time registration fee</span>
-                    </div>
-                  </label>
-                </div>
-
-                {/* Item Description (Supplements & Merchandise) */}
-                {paymentFormData.category === "Supplements & Merchandise" && (
-                  <div>
-                    <label className="block text-xs font-semibold text-pink-400 mb-1">
-                      Item Description
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Whey Protein 1kg, Creatine 300g, Gym Shaker Bottle"
-                      value={paymentFormData.itemDescription}
-                      onChange={(e) => setPaymentFormData({ ...paymentFormData, itemDescription: e.target.value })}
-                      className="w-full bg-[#171424] border border-pink-500/40 rounded-xl px-3 py-2 text-white font-medium focus:outline-none focus:border-pink-400 text-xs"
-                    />
-                  </div>
-                )}
-
-                {/* Gym Revenue Share (%) Input */}
-                {(paymentFormData.category.toLowerCase().includes("pt") || paymentFormData.category.toLowerCase().includes("personal training")) && (
-                  <div className="p-2.5 bg-purple-950/40 border border-purple-500/30 rounded-xl space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <label className="font-bold text-purple-300 flex items-center gap-1.5">
-                        <Dumbbell className="w-3.5 h-3.5 text-purple-400" /> Gym Revenue Share (%)
                       </label>
-                      <span className="text-[10px] text-zinc-400 font-mono">
-                        Trainer gets {100 - (Number(paymentFormData.gymRevenuePercentage) || 0)}%
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 items-center">
-                      <input
-                        type="number"
-                        required
-                        min="0"
-                        max="100"
-                        step="any"
-                        value={paymentFormData.gymRevenuePercentage}
-                        onChange={(e) => setPaymentFormData({ ...paymentFormData, gymRevenuePercentage: Number(e.target.value) })}
-                        className="w-full bg-[#171424] border border-purple-500/40 rounded-xl px-3 py-1.5 text-white font-mono font-bold focus:outline-none focus:border-purple-400 text-xs"
-                      />
-                      <div className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1.5 rounded-lg border border-emerald-500/30 text-center">
-                        Gym Net: LKR {Math.round(paymentFormData.amount * ((Number(paymentFormData.gymRevenuePercentage) || 0) / 100)).toLocaleString()}
-                      </div>
                     </div>
                   </div>
-                )}
 
-                {/* Send Digital Receipt Checkbox */}
-                <div>
-                  <label className="flex items-center gap-2.5 cursor-pointer bg-[#171424] hover:bg-[#1e1932] p-2.5 rounded-xl border border-purple-500/30 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={paymentFormData.sendReceiptAlert}
-                      onChange={(e) => setPaymentFormData({ ...paymentFormData, sendReceiptAlert: e.target.checked })}
-                      className="w-4 h-4 accent-purple-500 rounded shrink-0"
-                    />
-                    <div className="flex-1 flex items-center justify-between text-xs">
-                      <span className="font-bold text-white flex items-center gap-1.5">
-                        <MessageCircle className="w-3.5 h-3.5 text-purple-400" /> Send Digital Receipt via Member App Chat
-                      </span>
-                      <span className="text-[10px] text-zinc-400">Instant in-app invoice</span>
-                    </div>
-                  </label>
                 </div>
               </div>
 
-              {/* Footer Buttons */}
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
+              {/* Fixed Footer Action Buttons */}
+              <div className="shrink-0 flex items-center justify-end gap-2.5 pt-2.5 border-t border-zinc-800 mt-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -9482,9 +10546,500 @@ export default function Home() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-white text-xs font-black shadow-lg shadow-purple-500/25 transition-all cursor-pointer active:scale-95"
+                  className="px-6 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-400 hover:to-pink-500 text-white text-xs font-black shadow-lg shadow-purple-500/25 transition-all cursor-pointer active:scale-95"
                 >
                   Save & Issue Receipt
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW & EDIT PAYMENT DETAILS MODAL */}
+      {isEditPaymentModalOpen && editingPaymentRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm overflow-hidden">
+          <div className="bg-[#120f1a] border border-purple-500/40 w-[95vw] max-w-7xl rounded-2xl p-4 shadow-2xl flex flex-col justify-between max-h-[90vh] overflow-hidden">
+            {/* Modal Header */}
+            <div className="shrink-0 flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400 shrink-0">
+                  <Pencil className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide leading-tight">
+                    View / Edit Payment Details
+                  </h3>
+                  <p className="text-[11px] text-purple-300/80">
+                    Modify package category, record payments, or adjust due dates for this transaction.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditPaymentModalOpen(false);
+                  setEditingPaymentRecord(null);
+                }}
+                className="text-zinc-400 hover:text-white p-1 cursor-pointer transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditPayment} className="flex-1 flex flex-col justify-between overflow-hidden">
+              {/* Scrollable Body Content */}
+              <div className="flex-1 overflow-y-auto py-2 pr-1 space-y-2.5 custom-scrollbar">
+                {/* 2-Column Grid Layout */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* COLUMN 1: Member Info, Category Select & Admission Fee Visual Breakdown */}
+                  <div className="space-y-2.5">
+                    {/* Member Context Info Card */}
+                    <div className="p-2.5 rounded-xl bg-purple-950/30 border border-purple-500/25 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-black text-white text-sm sm:text-base">
+                          {editPaymentFormData.memberName}
+                        </span>
+                        <span className="font-mono text-xs font-bold text-purple-300 bg-purple-500/20 px-2.5 py-0.5 rounded-lg border border-purple-500/30 shrink-0">
+                          {editPaymentFormData.invoiceNo}
+                        </span>
+                      </div>
+
+                      {/* Linked Partner Visual Badge */}
+                      {(() => {
+                        const partnerId = editPaymentFormData.partnerMemberId || editingPaymentRecord.partnerMemberId || editingPaymentRecord.partner_member_id;
+                        if (!partnerId) return null;
+
+                        const partnerMem = members.find(
+                          (m) => m.id === partnerId || m.memberId === partnerId || m.dbUuid === partnerId
+                        );
+                        const partnerDisplayName = partnerMem ? `${partnerMem.name} (${partnerMem.id})` : partnerId;
+
+                        return (
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-pink-500/15 border border-pink-500/35 text-pink-300 text-xs font-bold w-fit shadow-sm">
+                            <Users className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+                            <span>Linked with Partner: <strong className="text-white font-extrabold">{partnerDisplayName}</strong></span>
+                            <span className="text-[10px] font-mono font-extrabold bg-pink-500/25 text-pink-200 px-1.5 py-0.2 rounded border border-pink-400/30">
+                              Couple Plan 💖
+                            </span>
+                          </div>
+                        );
+                      })()}
+
+                      <p className="text-[11px] text-zinc-400">
+                        Method: <span className="text-zinc-200 font-semibold">{editingPaymentRecord.method}</span> • Recorded by: <span className="text-zinc-300 font-medium">{editingPaymentRecord.recordedBy || "System"}</span>
+                      </p>
+                    </div>
+
+                    {/* Fee Category Select & Admission Fee Group */}
+                    <div className="p-3 rounded-xl bg-[#181427] border border-purple-500/30 space-y-2.5">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs font-bold text-purple-300">
+                            Fee Category / Membership Package *
+                          </label>
+                          <span className="text-[10px] text-zinc-400 font-mono">Select plan</span>
+                        </div>
+                        
+                        <select
+                          value={editPaymentFormData.category}
+                          onChange={(e) => {
+                            const newCat = e.target.value;
+                            const pkg = gymPackages.find((p) => p.name === newCat);
+                            const pkgBasePrice = newCat === "Admission Fee" ? 1500 : (pkg ? pkg.price : editPaymentFormData.amount);
+                            const calcTotal = editPaymentFormData.includeAdmissionFee && newCat !== "Admission Fee" ? pkgBasePrice + 1500 : pkgBasePrice;
+                            const calcBal = Math.max(0, calcTotal - editPaymentFormData.paidAmount);
+
+                            setEditPaymentFormData({
+                              ...editPaymentFormData,
+                              category: newCat,
+                              amount: calcTotal,
+                              balanceDue: calcBal,
+                            });
+                          }}
+                          className="w-full bg-[#110e19] border border-purple-500/40 focus:border-purple-400 rounded-xl px-3 py-1.5 text-white font-semibold text-xs sm:text-sm focus:outline-none cursor-pointer"
+                        >
+                          {gymPackages.map((pkg) => (
+                            <option key={pkg.id || pkg.name} value={pkg.name}>
+                              {pkg.name} — LKR {pkg.price.toLocaleString()} / mo
+                            </option>
+                          ))}
+                          <option value="Admission Fee">Admission Fee — LKR 1,500</option>
+                          <option value="PT Fee">PT (Personal Training) Fee</option>
+                          <option value="Supplements & Merchandise">Supplements & Merchandise</option>
+                        </select>
+                      </div>
+
+                      {/* Select Partner / Second Member (For Couple Packages) - Searchable Combobox */}
+                      <div className="relative">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs font-bold text-pink-300 flex items-center gap-1.5">
+                            <Users className="w-3.5 h-3.5 text-pink-400" /> Linked Partner / Second Member (Couple Package)
+                          </label>
+                          <span className="text-[10px] text-zinc-400 font-mono">Search & Link</span>
+                        </div>
+
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-pink-400/70 pointer-events-none z-10" />
+                          <input
+                            type="text"
+                            placeholder="Type member ID, name, or phone to search partner..."
+                            value={partnerComboboxQuery}
+                            onChange={(e) => {
+                              setPartnerComboboxQuery(e.target.value);
+                              setIsPartnerComboboxOpen(true);
+                              if (!e.target.value.trim() && editPaymentFormData.partnerMemberId) {
+                                setEditPaymentFormData({ ...editPaymentFormData, partnerMemberId: null });
+                              }
+                            }}
+                            onFocus={() => setIsPartnerComboboxOpen(true)}
+                            onBlur={() => setTimeout(() => setIsPartnerComboboxOpen(false), 250)}
+                            className="w-full bg-[#110e19] border border-pink-500/40 focus:border-pink-400 rounded-xl pl-8 pr-8 py-1.5 text-white font-semibold text-xs focus:outline-none placeholder-zinc-500 shadow-inner transition-all"
+                          />
+
+                          {partnerComboboxQuery && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPartnerComboboxQuery("");
+                                setEditPaymentFormData({ ...editPaymentFormData, partnerMemberId: null });
+                                setIsPartnerComboboxOpen(false);
+                              }}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors z-10"
+                              title="Clear search / Unlink partner"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Linked Partner Card Badge */}
+                        {editPaymentFormData.partnerMemberId && (
+                          <div className="mt-1.5 p-2 bg-pink-950/30 border border-pink-500/30 rounded-xl flex items-center justify-between gap-2 animate-in fade-in duration-150">
+                            {(() => {
+                              const pId = editPaymentFormData.partnerMemberId;
+                              const linkedMem = members.find((m) => m.id === pId || m.dbUuid === pId || (m as any).member_id === pId);
+                              return (
+                                <>
+                                  <div className="flex items-center gap-2 overflow-hidden">
+                                    <div className="w-7 h-7 rounded-full bg-pink-500/20 border border-pink-400/40 flex items-center justify-center text-pink-300 font-bold text-xs shrink-0">
+                                      {linkedMem?.name ? linkedMem.name.charAt(0).toUpperCase() : <Users className="w-3.5 h-3.5 text-pink-400" />}
+                                    </div>
+                                    <div className="truncate">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-xs font-bold text-pink-200 truncate">{linkedMem?.name || "Linked Partner"}</span>
+                                        <span className="text-[10px] font-mono bg-pink-500/20 text-pink-300 px-1 py-0.2 rounded border border-pink-500/30">
+                                          {linkedMem?.id || pId}
+                                        </span>
+                                      </div>
+                                      <p className="text-[10px] text-zinc-400 truncate">
+                                        {linkedMem?.phone && linkedMem.phone !== "N/A" ? `Phone: ${linkedMem.phone}` : linkedMem?.tier ? `Package: ${linkedMem.tier}` : "Linked Second Member"}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditPaymentFormData({ ...editPaymentFormData, partnerMemberId: null });
+                                      setPartnerComboboxQuery("");
+                                    }}
+                                    className="px-2 py-0.5 text-xs font-bold text-rose-300 hover:text-rose-100 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg transition-colors shrink-0 flex items-center gap-1"
+                                  >
+                                    <X className="w-3 h-3" /> Unlink
+                                  </button>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+
+                        {/* Autocomplete Dropdown Popover */}
+                        {isPartnerComboboxOpen && (
+                          <div className="absolute z-50 left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-[#181222] border border-pink-500/40 rounded-xl shadow-2xl backdrop-blur-md divide-y divide-zinc-800/80 custom-scrollbar animate-in fade-in duration-150">
+                            {/* Option 1: Clear / Unlink */}
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setEditPaymentFormData({ ...editPaymentFormData, partnerMemberId: null });
+                                setPartnerComboboxQuery("");
+                                setIsPartnerComboboxOpen(false);
+                              }}
+                              className="w-full text-left px-3 py-2 text-xs font-semibold text-zinc-400 hover:text-white hover:bg-zinc-800/60 transition-colors flex items-center justify-between"
+                            >
+                              <span className="italic flex items-center gap-1.5">
+                                <UserX className="w-3.5 h-3.5 text-zinc-400" /> No Partner Linked (Single Member)
+                              </span>
+                              {!editPaymentFormData.partnerMemberId && (
+                                <span className="text-[10px] bg-zinc-800 text-zinc-300 px-1.5 py-0.2 rounded font-mono">Selected</span>
+                              )}
+                            </button>
+
+                            {/* Filtered registered members list */}
+                            {(() => {
+                              const primaryId = editingPaymentRecord?.memberId;
+                              const q = partnerComboboxQuery.trim().toLowerCase();
+
+                              const matchingMembers = members.filter((m) => {
+                                if (m.id === primaryId || m.dbUuid === primaryId || (m as any).member_id === primaryId) return false;
+                                if (!q) return true;
+                                const nameMatch = m.name?.toLowerCase().includes(q);
+                                const idMatch = m.id?.toLowerCase().includes(q) || (m as any).member_id?.toLowerCase().includes(q);
+                                const phoneMatch = m.phone?.toLowerCase().includes(q);
+                                return nameMatch || idMatch || phoneMatch;
+                              });
+
+                              if (matchingMembers.length === 0) {
+                                return (
+                                  <div className="px-3 py-2 text-xs text-zinc-400 text-center font-medium">
+                                    No matching members found for "{partnerComboboxQuery}".
+                                  </div>
+                                );
+                              }
+
+                              return matchingMembers.slice(0, 30).map((m) => {
+                                const isSelected = editPaymentFormData.partnerMemberId === m.id || editPaymentFormData.partnerMemberId === m.dbUuid;
+                                return (
+                                  <button
+                                    key={m.id}
+                                    type="button"
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      const chosenPartnerUuid = m.dbUuid || (m.id && m.id.includes("-") ? m.id : m.id);
+                                      setEditPaymentFormData({
+                                        ...editPaymentFormData,
+                                        partnerMemberId: chosenPartnerUuid,
+                                      });
+                                      setPartnerComboboxQuery(`${m.name} (${m.id})`);
+                                      setIsPartnerComboboxOpen(false);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 hover:bg-pink-950/40 transition-colors flex items-center justify-between gap-2 ${
+                                      isSelected ? "bg-pink-500/20 border-l-4 border-pink-500" : ""
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 overflow-hidden">
+                                      <div className="w-6 h-6 rounded-full bg-purple-500/20 border border-purple-400/30 flex items-center justify-center text-purple-300 font-bold text-xs shrink-0">
+                                        {m.name ? m.name.charAt(0).toUpperCase() : "M"}
+                                      </div>
+                                      <div className="truncate">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-xs font-bold text-white truncate">{m.name}</span>
+                                          <span className="text-[10px] font-mono text-pink-300 bg-pink-500/10 px-1 py-0.2 rounded border border-pink-500/20">
+                                            {m.id}
+                                          </span>
+                                        </div>
+                                        <p className="text-[10px] text-zinc-400 truncate">
+                                          {m.phone && m.phone !== "N/A" ? `📱 ${m.phone}` : ""} {m.tier ? `• ${m.tier}` : ""}
+                                        </p>
+                                      </div>
+                                    </div>
+
+                                    {isSelected && (
+                                      <span className="text-[10px] font-bold text-pink-400 bg-pink-500/20 px-1.5 py-0.5 rounded-full border border-pink-500/40 shrink-0">
+                                        Linked ✓
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              });
+                            })()}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Admission Fee Toggle */}
+                      {editPaymentFormData.category !== "Admission Fee" && (
+                        <div className="flex items-center justify-between pt-2 border-t border-purple-500/20">
+                          <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-200 font-semibold select-none">
+                            <input
+                              type="checkbox"
+                              checked={editPaymentFormData.includeAdmissionFee}
+                              onChange={(e) => {
+                                const isChecked = e.target.checked;
+                                const pkg = gymPackages.find((p) => p.name === editPaymentFormData.category);
+                                const pkgBasePrice = pkg ? pkg.price : (editPaymentFormData.amount > 1500 ? editPaymentFormData.amount - 1500 : editPaymentFormData.amount);
+                                const calcTotal = isChecked ? pkgBasePrice + 1500 : pkgBasePrice;
+                                const calcBal = Math.max(0, calcTotal - editPaymentFormData.paidAmount);
+
+                                setEditPaymentFormData({
+                                  ...editPaymentFormData,
+                                  includeAdmissionFee: isChecked,
+                                  amount: calcTotal,
+                                  balanceDue: calcBal,
+                                });
+                              }}
+                              className="w-4 h-4 rounded border-purple-500/40 text-purple-600 focus:ring-purple-500/20 bg-zinc-900 cursor-pointer"
+                            />
+                            <span>Includes Admission Fee (+ LKR 1,500)</span>
+                          </label>
+                          <span className="text-[10px] text-purple-400 font-mono font-bold">One-Time Reg. Fee</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Total Amount Visual Breakdown Card */}
+                    <div className="p-3 rounded-xl bg-[#0d0918] border border-purple-500/25 space-y-1 font-mono">
+                      <div className="text-[10px] text-zinc-400 uppercase tracking-wider font-sans font-bold">
+                        Total Amount Calculation Breakdown
+                      </div>
+                      {(() => {
+                        const pkg = gymPackages.find((p) => p.name === editPaymentFormData.category);
+                        const pkgBasePrice = editPaymentFormData.category === "Admission Fee" ? 1500 : (pkg ? pkg.price : (editPaymentFormData.includeAdmissionFee ? editPaymentFormData.amount - 1500 : editPaymentFormData.amount));
+                        return (
+                          <div className="space-y-1 text-xs">
+                            <div className="flex justify-between text-zinc-300">
+                              <span>Base Package Price ({editPaymentFormData.category}):</span>
+                              <span className="font-bold text-white">LKR {pkgBasePrice.toLocaleString()}</span>
+                            </div>
+                            {editPaymentFormData.includeAdmissionFee && editPaymentFormData.category !== "Admission Fee" && (
+                              <div className="flex justify-between text-amber-300">
+                                <span>+ Admission Fee (Registration):</span>
+                                <span className="font-bold">LKR 1,500</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between text-purple-300 font-black pt-1.5 border-t border-purple-500/20 text-xs sm:text-sm">
+                              <span>Calculated Total Amount:</span>
+                              <span className="text-purple-200">LKR {editPaymentFormData.amount.toLocaleString()}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* COLUMN 2: Amounts Inputs, Balance Due & Dates */}
+                  <div className="space-y-2.5">
+                    {/* Amounts Group Card */}
+                    <div className="p-3 rounded-xl bg-[#181427] border border-purple-500/30 space-y-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {/* Total Amount Input */}
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-300 mb-1">
+                            Total Amount (LKR) *
+                          </label>
+                          <input
+                            type="number"
+                            required
+                            min="0"
+                            step="any"
+                            value={editPaymentFormData.amount}
+                            onChange={(e) => {
+                              const newTotal = Number(e.target.value) || 0;
+                              const pAmt = editPaymentFormData.paidAmount;
+                              const newBal = Math.max(0, newTotal - pAmt);
+                              setEditPaymentFormData({
+                                ...editPaymentFormData,
+                                amount: newTotal,
+                                balanceDue: newBal,
+                              });
+                            }}
+                            className="w-full bg-[#110e19] border border-zinc-700 focus:border-purple-400 rounded-xl px-3 py-1.5 text-white font-mono text-xs sm:text-sm font-bold focus:outline-none"
+                          />
+                        </div>
+
+                        {/* Paid Amount Input */}
+                        <div>
+                          <label className="block text-xs font-bold text-emerald-400 mb-1">
+                            Paid Amount (LKR) *
+                          </label>
+                          <input
+                            type="number"
+                            required
+                            min="0"
+                            step="any"
+                            value={editPaymentFormData.paidAmount}
+                            onChange={(e) => {
+                              const newPaid = Number(e.target.value) || 0;
+                              const totAmt = editPaymentFormData.amount;
+                              const newBal = Math.max(0, totAmt - newPaid);
+                              setEditPaymentFormData({
+                                ...editPaymentFormData,
+                                paidAmount: newPaid,
+                                balanceDue: newBal,
+                              });
+                            }}
+                            className="w-full bg-[#110e19] border border-emerald-500/50 focus:border-emerald-400 rounded-xl px-3 py-1.5 text-emerald-300 font-mono text-xs sm:text-sm font-bold focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Calculated Balance Due Display */}
+                      <div className="flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-zinc-800">
+                        <span className="text-xs font-bold text-zinc-300">Calculated Balance Due:</span>
+                        <span className={`font-mono text-xs sm:text-sm font-black px-2.5 py-0.5 rounded-lg border ${
+                          editPaymentFormData.balanceDue > 0
+                            ? "bg-rose-950/70 text-rose-300 border-rose-500/50"
+                            : "bg-emerald-950/70 text-emerald-300 border-emerald-500/50"
+                        }`}>
+                          LKR {editPaymentFormData.balanceDue.toLocaleString()} {editPaymentFormData.balanceDue <= 0 ? "(Paid)" : ""}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Dates Group Card */}
+                    <div className="p-3 rounded-xl bg-[#181427] border border-purple-500/30 space-y-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {/* Paid Date */}
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-300 mb-1">
+                            Paid Date *
+                          </label>
+                          <input
+                            type="date"
+                            required
+                            value={editPaymentFormData.paymentDate}
+                            onChange={(e) =>
+                              setEditPaymentFormData({
+                                ...editPaymentFormData,
+                                paymentDate: e.target.value,
+                              })
+                            }
+                            className="w-full bg-[#110e19] border border-zinc-700 focus:border-purple-400 rounded-xl px-3 py-1.5 text-white font-mono text-xs sm:text-sm focus:outline-none cursor-pointer [color-scheme:dark]"
+                          />
+                        </div>
+
+                        {/* Next Due Date */}
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-300 mb-1">
+                            Next Due Date *
+                          </label>
+                          <input
+                            type="date"
+                            required
+                            value={editPaymentFormData.dueDate}
+                            onChange={(e) =>
+                              setEditPaymentFormData({
+                                ...editPaymentFormData,
+                                dueDate: e.target.value,
+                              })
+                            }
+                            className="w-full bg-[#110e19] border border-zinc-700 focus:border-purple-400 rounded-xl px-3 py-1.5 text-white font-mono text-xs sm:text-sm focus:outline-none cursor-pointer [color-scheme:dark]"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Fixed Footer Action Buttons */}
+              <div className="shrink-0 flex items-center justify-end gap-2.5 pt-2.5 border-t border-zinc-800/80 mt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditPaymentModalOpen(false);
+                    setEditingPaymentRecord(null);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs sm:text-sm font-bold transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-black text-xs sm:text-sm shadow-xl shadow-amber-500/25 transition-all cursor-pointer active:scale-95"
+                >
+                  Save Changes
                 </button>
               </div>
             </form>
@@ -10171,7 +11726,7 @@ export default function Home() {
         defaultOfficialGymPackages={defaultOfficialGymPackages}
       />
 
-      {/* 9. PENDING & OVERDUE PAYMENTS POPUP MODAL */}
+      {/* 9. PENDING BALANCES & UNPAID PAYMENTS MODAL */}
       {isPendingPaymentsModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-sm overflow-y-auto">
           <div className="bg-[#180f14] border border-pink-500/40 w-[95vw] md:w-[90vw] max-w-7xl rounded-2xl p-4 sm:p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200 my-auto">
@@ -10186,112 +11741,117 @@ export default function Home() {
                     Pending & Overdue Members List
                   </h3>
                   <p className="text-xs text-pink-300/80">
-                    Members whose membership fee is expiring soon or overdue. Send immediate WhatsApp/SMS alerts or mark as paid.
+                    Payment records with outstanding balances (paid_amount &lt; total amount). Click 'Clear Balance' to mark as fully paid.
                   </p>
                 </div>
               </div>
-              <button onClick={() => setIsPendingPaymentsModalOpen(false)} className="text-zinc-400 hover:text-white p-1">
+              <button onClick={() => setIsPendingPaymentsModalOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Pending List Table */}
             {(() => {
-              const pendingOverdueMembers = members.filter((m) => {
-                const plan = (m.tier || "").toString().trim();
-                const hasPlan = plan.length > 0 && plan !== "N/A" && plan.toLowerCase() !== "null";
-                if (!hasPlan) return false;
-
-                const expVal = m.expiry_date || m.expiryDate;
-                if (!expVal) return false;
-                const expDate = new Date(expVal);
-                return !isNaN(expDate.getTime()) && expDate < new Date();
+              const rawPendingRecords = paymentRecords.filter((p) => {
+                const pAmt = p.paidAmount !== undefined && p.paidAmount !== null ? Number(p.paidAmount) : Number(p.amount);
+                const bal = p.balanceDue !== undefined && p.balanceDue !== null ? Number(p.balanceDue) : Math.max(0, Number(p.amount) - pAmt);
+                return bal > 0 || pAmt < Number(p.amount);
               });
 
-              const totalPendingAmt = pendingOverdueMembers.reduce((sum, m) => {
-                const plan = (m.tier || "").toString().trim();
-                const hasPlan = plan.length > 0 && plan !== "N/A" && plan.toLowerCase() !== "null";
-                if (!hasPlan) return sum;
+              const pendingSearchQuery = pendingSearchTerm.toLowerCase().trim();
 
-                const pkg = gymPackages.find((p) => (p.package_name || p.name) === m.tier || p.name === m.tier);
-                const price = pkg ? Number(pkg.price) || 0 : 0;
-                return sum + price;
+              const pendingBalanceRecords = rawPendingRecords.filter((p) => {
+                if (!pendingSearchQuery) return true;
+                const matchesName = String(p.memberName || "").toLowerCase().includes(pendingSearchQuery);
+                const matchesId = String(p.memberId || "").toLowerCase().includes(pendingSearchQuery);
+                const matchesPhone = String(p.phone || "").toLowerCase().includes(pendingSearchQuery);
+                const matchesInvoice = String(p.invoiceNo || "").toLowerCase().includes(pendingSearchQuery);
+                return matchesName || matchesId || matchesPhone || matchesInvoice;
+              });
+
+              const totalPendingBal = rawPendingRecords.reduce((sum, p) => {
+                const pAmt = p.paidAmount !== undefined && p.paidAmount !== null ? Number(p.paidAmount) : Number(p.amount);
+                const bal = p.balanceDue !== undefined && p.balanceDue !== null ? Number(p.balanceDue) : Math.max(0, Number(p.amount) - pAmt);
+                return sum + bal;
               }, 0);
 
               return (
                 <div className="space-y-4">
+                  {/* Live Search Input */}
+                  <div className="relative w-full sm:w-80">
+                    <Search className="w-4 h-4 text-pink-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      placeholder="Search by name, ID, or phone..."
+                      value={pendingSearchTerm}
+                      onChange={(e) => setPendingSearchTerm(e.target.value)}
+                      className="w-full bg-[#120b0f] border border-pink-500/40 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-pink-400 font-medium"
+                    />
+                    {pendingSearchTerm && (
+                      <button
+                        type="button"
+                        onClick={() => setPendingSearchTerm("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
+                        title="Clear search"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
                   <div className="overflow-x-auto w-full pb-2 rounded-xl border border-zinc-800/80 bg-[#120b0f]">
                     <table className="w-full text-left text-xs sm:text-sm border-collapse">
                       <thead>
                         <tr className="text-[11px] font-bold text-pink-400 uppercase tracking-wider border-b border-zinc-800 bg-[#150f14]">
-                          <th className="pb-3 pt-3 pl-4 pr-3 min-w-[150px] whitespace-nowrap">MEMBER & CONTACT</th>
-                          <th className="pb-3 pt-3 px-3 min-w-[110px] whitespace-nowrap">CATEGORY</th>
-                          <th className="pb-3 pt-3 px-3 min-w-[120px] whitespace-nowrap">EXPIRE / DUE DATE</th>
-                          <th className="pb-3 pt-3 px-3 min-w-[110px] whitespace-nowrap">EST. AMOUNT</th>
-                          <th className="pb-3 pt-3 px-3 min-w-[100px] whitespace-nowrap">STATUS</th>
-                          <th className="pb-3 pt-3 pr-4 pl-3 min-w-[220px] text-right whitespace-nowrap">ACTIONS</th>
+                          <th className="pb-3 pt-3 pl-4 pr-3 min-w-[150px] whitespace-nowrap">MEMBER NAME</th>
+                          <th className="pb-3 pt-3 px-3 min-w-[110px] whitespace-nowrap">TOTAL FEE</th>
+                          <th className="pb-3 pt-3 px-3 min-w-[110px] whitespace-nowrap">PAID AMOUNT</th>
+                          <th className="pb-3 pt-3 px-3 min-w-[110px] whitespace-nowrap">BALANCE DUE</th>
+                          <th className="pb-3 pt-3 pr-4 pl-3 min-w-[150px] text-right whitespace-nowrap">ACTIONS</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-800/60">
-                        {pendingOverdueMembers.map((mem) => {
-                          const pkg = gymPackages.find((p) => (p.package_name || p.name) === mem.tier || p.name === mem.tier);
-                          const amt = pkg ? Number(pkg.price) || 0 : 0;
+                        {pendingBalanceRecords.map((pay) => {
+                          const pAmt = pay.paidAmount !== undefined && pay.paidAmount !== null ? Number(pay.paidAmount) : Number(pay.amount);
+                          const bal = pay.balanceDue !== undefined && pay.balanceDue !== null ? Number(pay.balanceDue) : Math.max(0, Number(pay.amount) - pAmt);
 
                           return (
-                            <tr key={mem.id} className="hover:bg-zinc-800/40 transition-colors">
-                              {/* Member & Contact */}
+                            <tr key={pay.id} className="hover:bg-zinc-800/40 transition-colors">
+                              {/* Member Name */}
                               <td className="py-3.5 pl-4 pr-3 min-w-[150px] whitespace-nowrap">
-                                <h4 className="font-bold text-white text-sm">{mem.name}</h4>
-                                <span className="text-[11px] text-zinc-400 font-mono block">{mem.phone}</span>
-                                <span className="text-[10px] text-pink-400/80 font-mono">{mem.id}</span>
-                              </td>
-
-                              {/* Category */}
-                              <td className="py-3.5 px-3 min-w-[110px] whitespace-nowrap">
-                                <span className="px-2.5 py-1 rounded-lg text-xs font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 inline-block">
-                                  {mem.tier}
+                                <h4 className="font-bold text-white text-sm">{pay.memberName}</h4>
+                                <span className="text-[11px] text-zinc-400 font-mono block">
+                                  {pay.memberId ? `${pay.memberId} • ${pay.phone}` : `External Payer • ${pay.phone}`}
                                 </span>
+                                <span className="text-[10px] text-purple-300 font-mono">{pay.invoiceNo} • {pay.category}</span>
                               </td>
 
-                              {/* Due Date */}
-                              <td className="py-3.5 px-3 min-w-[120px] whitespace-nowrap font-mono font-bold text-pink-300">
-                                {mem.expiryDate || mem.expiry_date || "Expired"}
+                              {/* Total Fee */}
+                              <td className="py-3.5 px-3 min-w-[110px] whitespace-nowrap font-mono font-bold text-white">
+                                LKR {pay.amount.toLocaleString()}
                               </td>
 
-                              {/* Amount */}
-                              <td className="py-3.5 px-3 min-w-[110px] whitespace-nowrap font-mono font-black text-white">
-                                LKR {amt.toLocaleString()}
+                              {/* Paid Amount */}
+                              <td className="py-3.5 px-3 min-w-[110px] whitespace-nowrap font-mono font-bold text-emerald-400">
+                                LKR {pAmt.toLocaleString()}
                               </td>
 
-                              {/* Status */}
-                              <td className="py-3.5 px-3 min-w-[100px] whitespace-nowrap">
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-pink-500/20 text-pink-400 border border-pink-500/40 animate-pulse">
-                                  Overdue ⚠️
+                              {/* Balance Due */}
+                              <td className="py-3.5 px-3 min-w-[110px] whitespace-nowrap font-mono">
+                                <span className="text-rose-400 font-extrabold bg-rose-950/60 px-2.5 py-1 rounded-md border border-rose-800/60 inline-block">
+                                  LKR {bal.toLocaleString()}
                                 </span>
                               </td>
 
                               {/* Actions */}
-                              <td className="py-3.5 pr-4 pl-3 min-w-[220px] text-right whitespace-nowrap">
+                              <td className="py-3.5 pr-4 pl-3 min-w-[150px] text-right whitespace-nowrap">
                                 <div className="flex items-center justify-end gap-2 whitespace-nowrap shrink-0">
-                                  {/* In-App Chat Renewal Reminder */}
                                   <button
-                                    onClick={() => handleSendInAppRenewalReminder(mem)}
-                                    className="px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-                                    title="Send In-App Chat Renewal Reminder"
+                                    onClick={() => handleClearBalance(pay)}
+                                    className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-black shadow-md transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5"
+                                    title="Clear balance and set paid amount equal to total amount"
                                   >
-                                    <MessageSquare className="w-3.5 h-3.5" /> Remind Chat
-                                  </button>
-
-                                  {/* Record Payment */}
-                                  <button
-                                    onClick={() => {
-                                      setIsPendingPaymentsModalOpen(false);
-                                      setPaymentFormData((prev) => ({ ...prev, memberId: mem.id }));
-                                      setIsRecordPaymentModalOpen(true);
-                                    }}
-                                    className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-black shadow-md transition-all cursor-pointer whitespace-nowrap shrink-0"
-                                  >
-                                    Record Payment
+                                    <CheckCircle className="w-3.5 h-3.5" /> Clear Balance
                                   </button>
                                 </div>
                               </td>
@@ -10299,10 +11859,12 @@ export default function Home() {
                           );
                         })}
 
-                        {pendingOverdueMembers.length === 0 && (
+                        {pendingBalanceRecords.length === 0 && (
                           <tr>
-                            <td colSpan={6} className="py-8 text-center text-zinc-400 text-xs">
-                              🎉 Great job! No pending or overdue member payments at this time.
+                            <td colSpan={5} className="py-8 text-center text-zinc-400 text-xs">
+                              {pendingSearchTerm.trim()
+                                ? `No matching pending balance records found for "${pendingSearchTerm}".`
+                                : "🎉 Great job! No pending payment balances at this time. All members are fully paid!"}
                             </td>
                           </tr>
                         )}
@@ -10313,7 +11875,7 @@ export default function Home() {
                   {/* Modal Footer */}
                   <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
                     <span className="text-xs text-zinc-400 font-mono">
-                      Total Pending Overdue: <strong className="text-pink-400">LKR {totalPendingAmt.toLocaleString()}</strong>
+                      Showing <strong className="text-pink-400">{pendingBalanceRecords.length}</strong> of {rawPendingRecords.length} records • Total Outstanding: <strong className="text-pink-400">LKR {totalPendingBal.toLocaleString()}</strong>
                     </span>
 
                     <button
@@ -10329,6 +11891,185 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* 9.5. INACTIVE MEMBERS MODAL */}
+      {isInactiveMembersModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-[#16120e] border border-amber-500/40 w-[95vw] md:w-[90vw] max-w-7xl rounded-2xl p-4 sm:p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200 my-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400 shrink-0">
+                  <UserX className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white tracking-wide flex items-center gap-2">
+                    Inactive & Expired Members List
+                  </h3>
+                  <p className="text-xs text-amber-300/80">
+                    Members with expired packages, inactive status, or missing active membership plans. Click 'Record Payment' to issue a package.
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setIsInactiveMembersModalOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Inactive Members Table */}
+            {(() => {
+              const rawInactiveMembers = members.filter((m) => {
+                const isStatusInactive = String(m.status || "").toLowerCase().trim() === "inactive";
+                const expVal = m.expiry_date || m.expiryDate;
+                const isExpiredDate = expVal ? new Date(expVal) < new Date() : false;
+                const hasNoActivePackage = !m.tier || m.tier === "N/A" || String(m.tier).trim() === "";
+                return isStatusInactive || isExpiredDate || hasNoActivePackage;
+              });
+
+              const inactiveSearchQuery = inactiveSearchTerm.toLowerCase().trim();
+
+              const inactiveMembersList = rawInactiveMembers.filter((m) => {
+                if (!inactiveSearchQuery) return true;
+                const matchesName = String(m.name || "").toLowerCase().includes(inactiveSearchQuery);
+                const matchesId = String(m.id || m.memberId || "").toLowerCase().includes(inactiveSearchQuery);
+                const matchesPhone = String(m.phone || "").toLowerCase().includes(inactiveSearchQuery);
+                return matchesName || matchesId || matchesPhone;
+              });
+
+              return (
+                <div className="space-y-4">
+                  {/* Live Search Input */}
+                  <div className="relative w-full sm:w-80">
+                    <Search className="w-4 h-4 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      placeholder="Search by name, ID, or phone..."
+                      value={inactiveSearchTerm}
+                      onChange={(e) => setInactiveSearchTerm(e.target.value)}
+                      className="w-full bg-[#100d0b] border border-amber-500/40 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 font-medium"
+                    />
+                    {inactiveSearchTerm && (
+                      <button
+                        type="button"
+                        onClick={() => setInactiveSearchTerm("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
+                        title="Clear search"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="overflow-x-auto w-full pb-2 rounded-xl border border-zinc-800/80 bg-[#100d0b]">
+                    <table className="w-full text-left text-xs sm:text-sm border-collapse">
+                      <thead>
+                        <tr className="text-[11px] font-bold text-amber-400 uppercase tracking-wider border-b border-zinc-800 bg-[#14100c]">
+                          <th className="pb-3 pt-3 pl-4 pr-3 min-w-[200px] whitespace-nowrap">MEMBER NAME & CONTACT</th>
+                          <th className="pb-3 pt-3 px-3 min-w-[160px] whitespace-nowrap">LAST EXPIRY DATE</th>
+                          <th className="pb-3 pt-3 pr-4 pl-3 min-w-[150px] text-right whitespace-nowrap">ACTIONS</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800/60">
+                        {inactiveMembersList.map((m) => {
+                          const expVal = m.expiry_date || m.expiryDate;
+                          const isExpired = expVal ? new Date(expVal) < new Date() : false;
+
+                          return (
+                            <tr key={m.id} className="hover:bg-zinc-800/40 transition-colors">
+                              {/* Member Name & Contact */}
+                              <td className="py-3.5 pl-4 pr-3 min-w-[200px] whitespace-nowrap">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-xs font-bold text-amber-300 shrink-0">
+                                    {m.name.charAt(0)}
+                                  </div>
+                                  <div>
+                                    <h4 className="font-bold text-white text-sm">{m.name}</h4>
+                                    <span className="text-[11px] text-zinc-400 font-mono block">
+                                      {m.id} • {m.phone || "No Phone"}
+                                    </span>
+                                    <span className="text-[10px] text-amber-300/80 font-mono">
+                                      Tier: {m.tier || "No Package"} • {m.address || "N/A"}
+                                    </span>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Last Expiry Date */}
+                              <td className="py-3.5 px-3 min-w-[160px] whitespace-nowrap font-mono">
+                                {expVal ? (
+                                  <div>
+                                    <span className={`font-bold inline-block px-2.5 py-1 rounded-md text-xs border ${
+                                      isExpired 
+                                        ? "text-rose-400 bg-rose-950/60 border-rose-800/60" 
+                                        : "text-amber-400 bg-amber-950/60 border-amber-800/60"
+                                    }`}>
+                                      {expVal} {isExpired && "(Expired)"}
+                                    </span>
+                                    <span className="text-[10px] text-zinc-400 block mt-0.5">
+                                      Status: <strong className={m.status === "Active" ? "text-emerald-400" : "text-amber-400"}>{m.status || "Inactive"}</strong>
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <span className="text-zinc-400 font-bold bg-zinc-800/60 px-2.5 py-1 rounded-md border border-zinc-700/60 inline-block text-xs">
+                                      No Expiry Recorded
+                                    </span>
+                                    <span className="text-[10px] text-amber-400 block mt-0.5 font-sans font-semibold">
+                                      Status: {m.status || "Inactive"}
+                                    </span>
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* Actions */}
+                              <td className="py-3.5 pr-4 pl-3 min-w-[150px] text-right whitespace-nowrap">
+                                <div className="flex items-center justify-end gap-2 whitespace-nowrap shrink-0">
+                                  <button
+                                    onClick={() => handleOpenRecordPaymentForMember(m)}
+                                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black text-xs font-black shadow-md transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5"
+                                    title="Open fee payment entry form to assign package"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" /> Record Payment
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+
+                        {inactiveMembersList.length === 0 && (
+                          <tr>
+                            <td colSpan={3} className="py-8 text-center text-zinc-400 text-xs">
+                              {inactiveSearchTerm.trim()
+                                ? `No matching inactive members found for "${inactiveSearchTerm}".`
+                                : "🎉 Fantastic! No inactive or expired members found."}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Modal Footer */}
+                  <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
+                    <span className="text-xs text-zinc-400 font-mono">
+                      Showing <strong className="text-amber-400">{inactiveMembersList.length}</strong> of {rawInactiveMembers.length} Inactive / Expired Members
+                    </span>
+
+                    <button
+                      onClick={() => setIsInactiveMembersModalOpen(false)}
+                      className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs font-bold cursor-pointer"
+                    >
+                      Close List
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* WORKOUT PLAN TEMPLATES & CREATOR MODAL */}
       {isWorkoutPlanModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -10719,29 +12460,30 @@ export default function Home() {
             </div>
 
             {(() => {
-              const paidPayments = paymentRecords.filter((p) => p.status === "Paid");
-              const totalGross = paidPayments.reduce((sum, p) => sum + p.amount, 0);
+              const getPaidVal = (p: PaymentRecord) => (p.paidAmount !== undefined && p.paidAmount !== null ? Number(p.paidAmount) : Number(p.amount));
 
-              const membershipSum = paidPayments
+              const totalGross = paymentRecords.reduce((sum, p) => sum + getPaidVal(p), 0);
+
+              const membershipSum = paymentRecords
                 .filter((p) => {
-                  const c = p.category.toLowerCase();
+                  const c = (p.category || "").toLowerCase();
                   return c.includes("membership") || c.includes("monthly") || c.includes("fee");
                 })
-                .reduce((sum, p) => sum + p.amount, 0);
+                .reduce((sum, p) => sum + getPaidVal(p), 0);
 
-              const admissionSum = paidPayments
+              const admissionSum = paymentRecords
                 .filter((p) => {
-                  const c = p.category.toLowerCase();
+                  const c = (p.category || "").toLowerCase();
                   return c.includes("admission") || c.includes("registration");
                 })
-                .reduce((sum, p) => sum + p.amount, 0);
+                .reduce((sum, p) => sum + getPaidVal(p), 0);
 
-              const ptSum = paidPayments
+              const ptSum = paymentRecords
                 .filter((p) => {
-                  const c = p.category.toLowerCase();
+                  const c = (p.category || "").toLowerCase();
                   return c.includes("pt") || c.includes("personal");
                 })
-                .reduce((sum, p) => sum + p.amount, 0);
+                .reduce((sum, p) => sum + getPaidVal(p), 0);
 
               const membershipPct = totalGross > 0 ? ((membershipSum / totalGross) * 100).toFixed(1) : "0.0";
               const admissionPct = totalGross > 0 ? ((admissionSum / totalGross) * 100).toFixed(1) : "0.0";
@@ -10749,7 +12491,10 @@ export default function Home() {
 
               // Group by Month
               const monthlyMap: Record<string, { memberships: number; admissions: number; pt: number; total: number }> = {};
-              paidPayments.forEach((p) => {
+              paymentRecords.forEach((p) => {
+                const pVal = getPaidVal(p);
+                if (pVal <= 0) return;
+
                 const dateObj = new Date(p.paymentDate);
                 const monthName = isNaN(dateObj.getTime())
                   ? "Recent"
@@ -10759,15 +12504,15 @@ export default function Home() {
                   monthlyMap[monthName] = { memberships: 0, admissions: 0, pt: 0, total: 0 };
                 }
 
-                const c = p.category.toLowerCase();
+                const c = (p.category || "").toLowerCase();
                 if (c.includes("admission") || c.includes("registration")) {
-                  monthlyMap[monthName].admissions += p.amount;
+                  monthlyMap[monthName].admissions += pVal;
                 } else if (c.includes("pt") || c.includes("personal")) {
-                  monthlyMap[monthName].pt += p.amount;
+                  monthlyMap[monthName].pt += pVal;
                 } else {
-                  monthlyMap[monthName].memberships += p.amount;
+                  monthlyMap[monthName].memberships += pVal;
                 }
-                monthlyMap[monthName].total += p.amount;
+                monthlyMap[monthName].total += pVal;
               });
 
               return (

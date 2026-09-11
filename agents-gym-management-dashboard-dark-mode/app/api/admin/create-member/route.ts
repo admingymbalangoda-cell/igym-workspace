@@ -184,7 +184,7 @@ export async function POST(req: Request) {
       weight: weight ? Number(weight) : null,
       starting_weight: weight ? Number(weight) : null,
       tier: tier || null,
-      status: status || 'Active',
+      status: status || 'Inactive',
       joined_date: new Date().toISOString().split('T')[0],
       duration_months: durationMonths ? Number(durationMonths) : null,
       expiry_date: expiryDate || null,
@@ -232,7 +232,7 @@ export async function POST(req: Request) {
           name: name,
           phone: phone || 'N/A',
           address: address || 'Balangoda',
-          status: status || 'Active',
+          status: status || 'Inactive',
           joined_date: new Date().toISOString().split('T')[0],
         }
 

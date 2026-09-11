@@ -511,3 +511,97 @@ export async function resetMemberPasswordAction(
     return { success: false, error: err?.message || 'Server error occurred resetting password.' }
   }
 }
+
+/**
+ * Secure Server Action to mark all unread messages for a member as read in Supabase `chat_messages`
+ * Uses adminSupabase (Service Role) to bypass RLS policies and guarantee DB persistence across refreshes.
+ */
+export async function markChatAsReadAction(
+  memberIdInput: string
+): Promise<{ success: boolean; updatedCount?: number; error?: string }> {
+  try {
+    if (!memberIdInput) return { success: false, error: 'No member ID provided.' }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+    if (!supabaseUrl || !serviceRoleKey) {
+      console.error('⚠️ [markChatAsReadAction] Missing Supabase URL or Service Role Key.')
+      return { success: false, error: 'Server configuration error.' }
+    }
+
+    const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+
+    const cleanId = memberIdInput.trim().toUpperCase().replace(/^MEM-/, 'MEM')
+    const formattedId = memberIdInput.trim().startsWith('MEM') ? memberIdInput.trim() : `MEM-${memberIdInput.trim()}`
+
+    // Resolve member details from DB
+    const { data: memberRows } = await adminSupabase
+      .from('members')
+      .select('id, auth_user_id, member_id')
+      .or(`member_id.eq.${cleanId},member_id.eq.${formattedId},id.eq.${memberIdInput}`)
+      .limit(1)
+
+    const targetMem = memberRows?.[0]
+    const dbUuid = targetMem?.auth_user_id || targetMem?.id
+    const memberCustomId = targetMem?.member_id || cleanId
+
+    const filterOrs = [
+      `member_id.eq.${cleanId}`,
+      `member_id.eq.${formattedId}`,
+      `member_id.eq.${memberIdInput}`,
+      memberCustomId ? `member_id.eq.${memberCustomId}` : null,
+      dbUuid ? `member_id.eq.${dbUuid}` : null,
+      `sender_id.eq.${cleanId}`,
+      `sender_id.eq.${formattedId}`,
+      `sender_id.eq.${memberIdInput}`,
+      memberCustomId ? `sender_id.eq.${memberCustomId}` : null,
+      dbUuid ? `sender_id.eq.${dbUuid}` : null,
+      `sender.eq.${cleanId}`,
+      `sender.eq.${formattedId}`,
+      `sender.eq.${memberIdInput}`,
+    ]
+      .filter(Boolean)
+      .join(',')
+
+    const nowIso = new Date().toISOString()
+
+    const { data, error } = await adminSupabase
+      .from('chat_messages')
+      .update({
+        is_read: true,
+      })
+      .or(filterOrs)
+      .select('id')
+
+    let totalUpdated = data?.length || 0
+
+    if (error || totalUpdated === 0) {
+      if (error) console.error('⚠️ [markChatAsReadAction] .or query error:', error.message)
+      const idsToTry = Array.from(new Set([cleanId, formattedId, memberIdInput, memberCustomId, dbUuid].filter(Boolean) as string[]))
+      for (const idVal of idsToTry) {
+        const { data: d1 } = await adminSupabase
+          .from('chat_messages')
+          .update({ is_read: true })
+          .eq('member_id', idVal)
+          .select('id')
+
+        const { data: d2 } = await adminSupabase
+          .from('chat_messages')
+          .update({ is_read: true })
+          .eq('sender_id', idVal)
+          .select('id')
+
+        totalUpdated += (d1?.length || 0) + (d2?.length || 0)
+      }
+    }
+
+    console.log(`Marked as read successfully (${totalUpdated} rows updated in DB for member ${memberIdInput})`)
+    return { success: true, updatedCount: totalUpdated }
+  } catch (err: any) {
+    console.error('Update failed:', err)
+    return { success: false, error: err?.message || 'Failed to mark chat as read.' }
+  }
+}
